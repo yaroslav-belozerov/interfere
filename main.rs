@@ -102,7 +102,7 @@ fn update(state: &mut State, message: Message) -> Task<Message> {
                     );
                 }
                 None => {
-                    create_endpoint_full(
+                    let id = create_endpoint_full(
                         &get_db().lock().unwrap(),
                         &EndpointDb {
                             id: 0,
@@ -120,6 +120,10 @@ fn update(state: &mut State, message: Message) -> Task<Message> {
                         },
                     )
                     .unwrap();
+                    return Task::batch([
+                        update(state, Message::ClickEndpoint(id)),
+                        update(state, Message::RefetchDb),
+                    ]);
                 }
             }
             state.draft = "".to_string();
@@ -142,10 +146,22 @@ fn update(state: &mut State, message: Message) -> Task<Message> {
         Message::ClickDeleteEndpoint(id) => {
             delete_endpoint(&get_db().lock().unwrap(), id).unwrap();
             match state.selected_endpoint {
+                Some(selected_id) => {
+                    if id == selected_id {
+                        state.selected_endpoint = None;
+                    }
+                }
+                None => {}
+            }
+            update(state, Message::RefetchDb)
+        }
+        Message::ClickDeleteResponse(id) => {
+            match state.selected_endpoint {
                 Some(endpoint_id) => {
                     match state.endpoints.iter().find(|&it| it.id == endpoint_id) {
                         Some(endpoint) => {
-                            if state.selected_response_index + 1 > endpoint.responses.iter().len() {
+                            if state.selected_response_index + 1 == endpoint.responses.iter().len()
+                            {
                                 state.selected_response_index =
                                     max(state.selected_response_index, 1) - 1;
                             }
@@ -155,9 +171,6 @@ fn update(state: &mut State, message: Message) -> Task<Message> {
                 }
                 None => return Task::none(),
             }
-            update(state, Message::RefetchDb)
-        }
-        Message::ClickDeleteResponse(id) => {
             delete_response(&get_db().lock().unwrap(), id).unwrap();
             update(state, Message::RefetchDb)
         }
@@ -195,7 +208,7 @@ fn endpoint_list(state: &State) -> Element<Message> {
                             ..GEIST_FONT
                         })
                         .color(state.theme.palette.primary),
-                    icon_outlined_b(Icons::Plus, Some(Message::Back))
+                    bi(Icons::Plus, Some(Message::Back), ButtonType::Outlined)
                         .width(32)
                         .height(32)
                 ]
@@ -206,13 +219,20 @@ fn endpoint_list(state: &State) -> Element<Message> {
             ),
             Column::from_iter(state.endpoints.iter().map(|el| {
                 row![
-                    text_b(
-                        text(el.url.strip_prefix("https://").unwrap()),
-                        Some(Message::ClickEndpoint(el.id))
+                    bt(
+                        el.url.strip_prefix("https://").unwrap(),
+                        Some(Message::ClickEndpoint(el.id)),
+                        ButtonType::Text
                     )
                     .width(256),
-                    danger_b("Del", Some(Message::ClickDeleteEndpoint(el.id))).width(52)
+                    bi(
+                        Icons::Delete,
+                        Some(Message::ClickDeleteEndpoint(el.id)),
+                        ButtonType::Danger
+                    )
+                    .width(52)
                 ]
+                .spacing(8)
                 .into()
             }))
             .spacing(8)
@@ -224,18 +244,20 @@ fn endpoint_list(state: &State) -> Element<Message> {
 }
 
 fn send_button(state: &State) -> Button<Message> {
-    primary_b(
+    bti(
         "Send",
+        Icons::Enter,
         if state.can_send {
             Some(Message::Send)
         } else {
             None
         },
-        Some(Icons::Enter),
+        ButtonType::Primary,
     )
     .height(Shrink)
     .padding([14, 16])
 }
+
 fn draft_urlbar(state: &State) -> Element<Message> {
     let urlbar = mytext_input(
         "Input URL...",
@@ -258,7 +280,7 @@ fn content(state: &State) -> Column<Message> {
         .find(|it| Some(it.id) == state.selected_endpoint);
     match current {
         Some(result) => {
-            let urlbar = text_b(
+            let urlbar = card_clickable(
                 row![
                     text(&result.url),
                     horizontal_space(),
@@ -269,8 +291,7 @@ fn content(state: &State) -> Column<Message> {
                 .align_y(Center),
                 Some(Message::Duplicate(result.url.clone())),
             )
-            .width(Fill)
-            .padding(16);
+            .width(Fill);
             column![
                 mb(
                     column![row![urlbar, send_button(state)]
@@ -284,7 +305,7 @@ fn content(state: &State) -> Column<Message> {
                     card(column![row![
                         text("Query params"),
                         horizontal_space(),
-                        primary_b("Add", None, None)
+                        bt("Add", None, ButtonType::Primary)
                     ]
                     .align_y(Center)]),
                     response_panels(state)
@@ -303,47 +324,50 @@ fn response_panels(state: &State) -> Element<Message> {
     match current {
         Some(e) => {
             let current_response = e.responses.get(state.selected_response_index);
-            column![
-                mb(
-                    ml(
-                        row![
-                            if state.selected_response_index > 0 {
-                                icon_outlined_b(
-                                    Icons::Left,
-                                    Some(Message::SetSelectedResponseIndex(
-                                        state.selected_response_index - 1,
-                                    )),
-                                )
-                            } else {
-                                empty_b()
-                            }
-                            .width(32)
-                            .height(32),
-                            text(state.selected_response_index + 1)
-                                .width(Fill)
-                                .align_x(Center),
-                            if state.selected_response_index + 1 < e.responses.len() {
-                                icon_outlined_b(
-                                    Icons::Right,
-                                    Some(Message::SetSelectedResponseIndex(
-                                        state.selected_response_index + 1,
-                                    )),
-                                )
-                            } else {
-                                empty_b()
-                            }
-                            .width(32)
-                            .height(32),
-                        ]
-                        .into(),
-                        16.0
-                    )
-                    .into(),
-                    16.0
-                ),
-                match current_response {
-                    Some(resp) => {
-                        let time = Local::now().offset().from_utc_datetime(&resp.received_time);
+            match current_response {
+                Some(resp) => {
+                    let time = Local::now().offset().from_utc_datetime(&resp.received_time);
+                    column![
+                        mb(
+                            ml(
+                                row![
+                                    if state.selected_response_index > 0 {
+                                        bi(
+                                            Icons::Left,
+                                            Some(Message::SetSelectedResponseIndex(
+                                                state.selected_response_index - 1,
+                                            )),
+                                            ButtonType::Outlined,
+                                        )
+                                    } else {
+                                        empty_b()
+                                    }
+                                    .width(32)
+                                    .height(32),
+                                    text(state.selected_response_index + 1)
+                                        .width(Fill)
+                                        .align_x(Center),
+                                    if state.selected_response_index + 1 < e.responses.len() {
+                                        bi(
+                                            Icons::Right,
+                                            Some(Message::SetSelectedResponseIndex(
+                                                state.selected_response_index + 1,
+                                            )),
+                                            ButtonType::Outlined,
+                                        )
+                                    } else {
+                                        empty_b()
+                                    }
+                                    .width(32)
+                                    .height(32),
+                                ]
+                                .align_y(Center)
+                                .into(),
+                                16.0
+                            )
+                            .into(),
+                            16.0
+                        ),
                         ml(
                             card(column![
                                 row![
@@ -372,9 +396,10 @@ fn response_panels(state: &State) -> Element<Message> {
                                     .align_y(Center)
                                     .spacing(8)
                                     .width(Fill),
-                                    icon_outlined_b(
+                                    bi(
                                         Icons::Delete,
-                                        Some(Message::ClickDeleteResponse(resp.id))
+                                        Some(Message::ClickDeleteResponse(resp.id)),
+                                        ButtonType::Text
                                     )
                                 ]
                                 .align_y(Center)
@@ -396,11 +421,11 @@ fn response_panels(state: &State) -> Element<Message> {
                             .into(),
                             16.0,
                         )
-                    }
-                    None => container(column![]),
+                    ]
                 }
-                .width(Fill)
-            ]
+                None => column![],
+            }
+            .width(Fill)
         }
         None => column![],
     }

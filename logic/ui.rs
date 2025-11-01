@@ -27,9 +27,11 @@ pub enum Icons {
     Right,
 }
 
-pub struct AdditionalColors {
-    pub elevated: Color,
-    pub elevated_focus: Color,
+pub enum ButtonType {
+    Primary,
+    Text,
+    Danger,
+    Outlined,
 }
 
 pub struct AppTheme {
@@ -48,9 +50,9 @@ pub fn match_icon(ic: Icons) -> Vec<u8> {
     }
 }
 
-pub fn primary_b<'a>(
+fn primary_b<'a>(
     string: impl IntoFragment<'a>,
-    msg: Option<Message>,
+    on_click: Option<Message>,
     icon_path: Option<Icons>,
 ) -> Button<'a, Message> {
     match icon_path {
@@ -72,26 +74,26 @@ pub fn primary_b<'a>(
                 .spacing(8)
                 .width(Shrink),
             )
-            .on_press_maybe(msg)
+            .on_press_maybe(on_click)
             .style(primary_button_style)
         }
         None => button(text(string).align_x(Center))
-            .on_press_maybe(msg)
+            .on_press_maybe(on_click)
             .style(primary_button_style),
     }
 }
-pub fn danger_b<'a>(string: impl IntoFragment<'a>, msg: Option<Message>) -> Button<'a, Message> {
+fn danger_b<'a>(string: impl IntoFragment<'a>, on_click: Option<Message>) -> Button<'a, Message> {
     button(text(string).align_x(Center))
-        .on_press_maybe(msg)
+        .on_press_maybe(on_click)
         .style(danger_button_style)
 }
 
-pub fn text_b<'a>(
+fn text_b<'a>(
     content: impl Into<Element<'a, Message, Theme, Renderer>>,
-    msg: Option<Message>,
+    on_click: Option<Message>,
 ) -> Button<'a, Message> {
     button(content)
-        .on_press_maybe(msg)
+        .on_press_maybe(on_click)
         .style(|theme, status| button::Style {
             border: border::rounded(8),
             background: Some(iced::Background::Color(match status {
@@ -101,9 +103,9 @@ pub fn text_b<'a>(
             ..button::text(theme, status)
         })
 }
-pub fn outlined_b<'a>(string: impl IntoFragment<'a>, msg: Option<Message>) -> Button<'a, Message> {
+fn outlined_b<'a>(string: impl IntoFragment<'a>, on_click: Option<Message>) -> Button<'a, Message> {
     button(text(string).align_x(Center))
-        .on_press_maybe(msg)
+        .on_press_maybe(on_click)
         .style(|t, s| button::Style {
             border: Border {
                 color: Color::parse("#C0CAF5").unwrap(),
@@ -121,7 +123,68 @@ pub fn outlined_b<'a>(string: impl IntoFragment<'a>, msg: Option<Message>) -> Bu
         })
 }
 
-pub fn icon_outlined_b<'a>(icon: Icons, msg: Option<Message>) -> Button<'a, Message> {
+pub fn bt<'a>(
+    content: &'a str,
+    on_click: Option<Message>,
+    button_type: ButtonType,
+) -> Button<'a, Message> {
+    match button_type {
+        ButtonType::Primary => primary_b(content, on_click, None),
+        ButtonType::Text => text_b(content, on_click),
+        ButtonType::Danger => danger_b(content, on_click),
+        ButtonType::Outlined => outlined_b(content, on_click),
+    }
+}
+
+pub fn bi<'a>(
+    icon: Icons,
+    on_click: Option<Message>,
+    button_type: ButtonType,
+) -> Button<'a, Message> {
+    match button_type {
+        ButtonType::Primary => todo!(),
+        ButtonType::Text => icon_text_b(icon, on_click),
+        ButtonType::Danger => icon_danger_b(icon, on_click),
+        ButtonType::Outlined => icon_outlined_b(icon, on_click),
+    }
+}
+
+pub fn bti<'a>(
+    content: &'a str,
+    icon: Icons,
+    on_click: Option<Message>,
+    button_type: ButtonType,
+) -> Button<'a, Message> {
+    match button_type {
+        ButtonType::Primary => primary_b(content, on_click, Some(icon)),
+        ButtonType::Text => todo!(),
+        ButtonType::Danger => todo!(),
+        ButtonType::Outlined => todo!(),
+    }
+}
+
+fn icon_danger_b<'a>(icon: Icons, on_click: Option<Message>) -> Button<'a, Message> {
+    button(
+        svg(svg::Handle::from_memory(match_icon(icon)))
+            .style(|t, _| svg::Style {
+                color: Some(button::danger(t, Status::Active).text_color),
+            })
+            .width(20)
+            .height(20),
+    )
+    .on_press_maybe(on_click)
+    .style(|t, s| button::Style {
+        border: Border {
+            color: Color::TRANSPARENT,
+            radius: Radius::new(32),
+            width: 1.0,
+        },
+        ..button::danger(t, s)
+    })
+    .padding(6)
+}
+
+fn icon_text_b<'a>(icon: Icons, on_click: Option<Message>) -> Button<'a, Message> {
     button(
         svg(svg::Handle::from_memory(match_icon(icon)))
             .style(|t, _| svg::Style {
@@ -130,7 +193,33 @@ pub fn icon_outlined_b<'a>(icon: Icons, msg: Option<Message>) -> Button<'a, Mess
             .width(20)
             .height(20),
     )
-    .on_press_maybe(msg)
+    .on_press_maybe(on_click)
+    .style(|t, s| button::Style {
+        border: Border {
+            color: Color::TRANSPARENT,
+            radius: Radius::new(32),
+            width: 1.0,
+        },
+        background: match s {
+            button::Status::Hovered => Some(Background::Color(Color::parse("#32333D").unwrap())),
+            _ => None,
+        },
+        text_color: button::text(t, Status::Active).text_color,
+        ..button::text(t, s)
+    })
+    .padding(6)
+}
+
+fn icon_outlined_b<'a>(icon: Icons, on_click: Option<Message>) -> Button<'a, Message> {
+    button(
+        svg(svg::Handle::from_memory(match_icon(icon)))
+            .style(|t, _| svg::Style {
+                color: Some(button::text(t, Status::Active).text_color),
+            })
+            .width(20)
+            .height(20),
+    )
+    .on_press_maybe(on_click)
     .style(|t, s| button::Style {
         border: Border {
             color: Color::parse("#C0CAF5").unwrap(),
@@ -163,17 +252,17 @@ pub fn empty_b() -> Button<'static, Message> {
 pub fn mytext_input<'a>(
     placeholder: &str,
     value: &str,
-    input_msg: &'a impl Fn(String) -> Message,
-    submit_msg: Message,
+    input_on_click: &'a impl Fn(String) -> Message,
+    submit_on_click: Message,
 ) -> TextInput<'a, Message> {
     text_input(placeholder, value)
         .style(custom_text_input_style)
         .padding(16)
-        .on_input(input_msg)
-        .on_submit(submit_msg)
+        .on_input(input_on_click)
+        .on_submit(submit_on_click)
 }
 
-pub fn custom_text_input_style(theme: &Theme, status: text_input::Status) -> text_input::Style {
+fn custom_text_input_style(theme: &Theme, status: text_input::Status) -> text_input::Style {
     text_input::Style {
         background: iced::Background::Color(Color::parse("#242530").unwrap()),
         border: Border {
@@ -229,6 +318,27 @@ pub fn card<'a, T: Paddable<'a>>(content: T) -> Container<'a, Message> {
             background: Some(iced::Background::Color(Color::parse("#242530").unwrap())),
             ..container::Style::default()
         }),
+    )
+}
+
+pub fn card_clickable<'a, T: Paddable<'a>>(
+    content: T,
+    on_click: Option<Message>,
+) -> Container<'a, Message> {
+    container(
+        button(content.apply_padding(0))
+            .on_press_maybe(on_click)
+            .padding(17)
+            .style(|t, s| button::Style {
+                border: border::rounded(8),
+                background: match s {
+                    button::Status::Hovered => {
+                        Some(Background::Color(Color::parse("#32333D").unwrap()))
+                    }
+                    _ => Some(iced::Background::Color(Color::parse("#242530").unwrap())),
+                },
+                ..button::text(t, s)
+            }),
     )
 }
 
