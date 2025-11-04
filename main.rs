@@ -2,6 +2,8 @@ mod logic;
 
 use crate::AppTheme;
 use chrono::{Local, NaiveDateTime, TimeZone};
+use html5ever::parse_document;
+use html5ever::tendril::TendrilSink;
 use iced::font::Weight;
 use iced::theme::Palette;
 use iced::widget::scrollable::Scrollbar;
@@ -21,7 +23,8 @@ use logic::crud::query::{
 use logic::crud::response::{create_response, delete_response, responses_by_endpoint_id};
 use logic::db::{get_db, init, load_endpoints};
 use logic::ui::*;
-use markup_fmt::{format_text, Language};
+use markup5ever_rcdom::{Handle, NodeData, RcDom};
+
 use reqwest::StatusCode;
 use serde_json::Value;
 use std::cmp::max;
@@ -249,11 +252,131 @@ fn detect_mime_type(content: &str) -> &'static str {
     "text/plain"
 }
 
-fn format_html(html: &str) -> String {
-    format_text(html, Language::Html, &Default::default(), |s, _| {
-        Ok::<_, std::convert::Infallible>(s.into())
-    })
-    .unwrap_or_else(|_| html.to_string())
+pub fn format_html(html: &str) -> String {
+    let dom = parse_document(RcDom::default(), Default::default())
+        .from_utf8()
+        .read_from(&mut html.as_bytes())
+        .unwrap_or_else(|_| RcDom::default());
+
+    let mut output = String::new();
+
+    // Preserve DOCTYPE
+    if html.trim_start().to_lowercase().starts_with("<!doctype") {
+        output.push_str("<!DOCTYPE html>\n");
+    }
+
+    for child in dom.document.children.borrow().iter() {
+        if matches!(child.data, NodeData::Doctype { .. }) {
+            continue;
+        }
+        serialize_node(child, &mut output, 0);
+    }
+
+    output.trim_end().to_string()
+}
+
+fn serialize_node(node: &Handle, output: &mut String, indent: usize) {
+    let indent_str = "  ".repeat(indent);
+
+    match &node.data {
+        NodeData::Element { name, attrs, .. } => {
+            // Self-closing tags
+            let tag_name = name.local.to_string();
+            let is_void = matches!(
+                tag_name.as_str(),
+                "area"
+                    | "base"
+                    | "br"
+                    | "col"
+                    | "embed"
+                    | "hr"
+                    | "img"
+                    | "input"
+                    | "link"
+                    | "meta"
+                    | "param"
+                    | "source"
+                    | "track"
+                    | "wbr"
+            );
+
+            // Opening tag
+            output.push_str(&indent_str);
+            output.push('<');
+            output.push_str(&tag_name);
+
+            // Attributes
+            for attr in attrs.borrow().iter() {
+                output.push(' ');
+                output.push_str(&attr.name.local.to_string());
+                output.push_str("=\"");
+                output.push_str(&attr.value);
+                output.push('"');
+            }
+
+            if is_void {
+                output.push_str(">\n");
+                return;
+            }
+
+            output.push('>');
+
+            // Children
+            let children = node.children.borrow();
+            let has_element_children = children
+                .iter()
+                .any(|child| matches!(child.data, NodeData::Element { .. }));
+
+            if has_element_children {
+                output.push('\n');
+                for child in children.iter() {
+                    serialize_node(child, output, indent + 1);
+                }
+                output.push_str(&indent_str);
+            } else {
+                // Inline text content
+                let mut has_text = false;
+                for child in children.iter() {
+                    if let NodeData::Text { ref contents } = child.data {
+                        let text = contents.borrow().to_string();
+                        let trimmed = text.trim();
+                        if !trimmed.is_empty() {
+                            output.push_str(trimmed);
+                            has_text = true;
+                        }
+                    }
+                }
+                if !has_text && !children.is_empty() {
+                    output.push('\n');
+                    for child in children.iter() {
+                        serialize_node(child, output, indent + 1);
+                    }
+                    output.push_str(&indent_str);
+                }
+            }
+
+            // Closing tag
+            output.push_str("</");
+            output.push_str(&tag_name);
+            output.push_str(">\n");
+        }
+        NodeData::Text { contents } => {
+            let text = contents.borrow().to_string();
+            let trimmed = text.trim();
+            if !trimmed.is_empty() {
+                output.push_str(&indent_str);
+                output.push_str(trimmed);
+                output.push('\n');
+            }
+        }
+        NodeData::Comment { contents } => {
+            output.push_str(&indent_str);
+            output.push_str("<!--");
+            output.push_str(contents);
+            output.push_str("-->\n");
+        }
+        _ => {}
+    }
 }
 
 fn format_response(s: &str) -> String {
