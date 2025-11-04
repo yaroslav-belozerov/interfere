@@ -1,11 +1,7 @@
 mod logic;
 
-use html5ever::tendril::TendrilSink;
-use std::cmp::max;
-
 use crate::AppTheme;
 use chrono::{Local, NaiveDateTime, TimeZone};
-use html5ever::parse_document;
 use iced::font::Weight;
 use iced::theme::Palette;
 use iced::widget::scrollable::Scrollbar;
@@ -25,9 +21,10 @@ use logic::crud::query::{
 use logic::crud::response::{create_response, delete_response, responses_by_endpoint_id};
 use logic::db::{get_db, init, load_endpoints};
 use logic::ui::*;
-use markup5ever_rcdom::{Handle, NodeData, RcDom};
+use markup_fmt::{format_text, Language};
 use reqwest::StatusCode;
 use serde_json::Value;
+use std::cmp::max;
 
 impl State {
     fn new() -> (Self, Task<Message>) {
@@ -253,83 +250,10 @@ fn detect_mime_type(content: &str) -> &'static str {
 }
 
 fn format_html(html: &str) -> String {
-    let dom = parse_document(RcDom::default(), Default::default())
-        .from_utf8()
-        .read_from(&mut html.as_bytes())
-        .unwrap();
-
-    let mut output = String::new();
-
-    // Check for DOCTYPE
-    if html.trim_start().to_lowercase().starts_with("<!doctype") {
-        output.push_str("<!DOCTYPE html>\n");
-    }
-
-    for child in dom.document.children.borrow().iter() {
-        if let NodeData::Doctype { .. } = child.data {
-            continue;
-        }
-        serialize_node(child, &mut output, 0);
-    }
-
-    output
-}
-fn serialize_node(node: &Handle, output: &mut String, indent: usize) {
-    let indent_str = "  ".repeat(indent);
-
-    match &node.data {
-        NodeData::Element { name, attrs, .. } => {
-            // Opening tag
-            output.push_str(&indent_str);
-            output.push('<');
-            output.push_str(&name.local.to_string());
-
-            for attr in attrs.borrow().iter() {
-                output.push(' ');
-                output.push_str(&attr.name.local.to_string());
-                output.push_str("=\"");
-                output.push_str(&attr.value);
-                output.push('"');
-            }
-            output.push('>');
-
-            // Children
-            let children = node.children.borrow();
-            let has_element_children = children
-                .iter()
-                .any(|child| matches!(child.data, NodeData::Element { .. }));
-
-            if has_element_children {
-                output.push('\n');
-                for child in children.iter() {
-                    serialize_node(child, output, indent + 1);
-                }
-                output.push_str(&indent_str);
-            } else {
-                // Inline text content
-                for child in children.iter() {
-                    if let NodeData::Text { ref contents } = child.data {
-                        output.push_str(&contents.borrow());
-                    }
-                }
-            }
-
-            // Closing tag
-            output.push_str("</");
-            output.push_str(&name.local.to_string());
-            output.push_str(">\n");
-        }
-        NodeData::Text { contents } => {
-            let text = contents.borrow();
-            let trimmed = text.trim();
-            if !trimmed.is_empty() {
-                output.push_str(&indent_str);
-                output.push_str(trimmed);
-                output.push('\n');
-            }
-        }
-        _ => {}
-    }
+    format_text(html, Language::Html, &Default::default(), |s, _| {
+        Ok::<_, std::convert::Infallible>(s.into())
+    })
+    .unwrap_or_else(|_| html.to_string())
 }
 
 fn format_response(s: &str) -> String {
