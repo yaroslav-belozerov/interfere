@@ -1,6 +1,5 @@
 use crate::AppTheme;
-use chrono::{NaiveDate, NaiveDateTime};
-use iced::theme::Palette;
+use chrono::NaiveDateTime;
 use reqwest::StatusCode;
 use std::fmt::Display;
 
@@ -17,6 +16,12 @@ pub enum Message {
     GotResponse(String, StatusCode),
     GotError(MyErr),
     Duplicate(String),
+    AddQueryParam(),
+    SetQueryParamKey(u64, String),
+    SetQueryParamContent(u64, String),
+    DeleteQueryParam(u64),
+    ToggleQueryParamIsOn(u64),
+    FormatResponse,
     Start,
     Empty,
 }
@@ -66,6 +71,7 @@ pub struct State {
     pub selected_endpoint: Option<u64>,
     pub draft: String,
     pub selected_response_index: usize,
+    pub formatted_response: Option<String>,
     pub theme: AppTheme,
 }
 

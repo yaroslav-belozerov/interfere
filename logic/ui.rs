@@ -25,6 +25,7 @@ pub enum Icons {
     Delete,
     Left,
     Right,
+    Check,
 }
 
 pub enum ButtonType {
@@ -47,6 +48,7 @@ pub fn match_icon(ic: Icons) -> Vec<u8> {
         Icons::Delete => include_bytes!("../res/icons/delete.svg").to_vec(),
         Icons::Left => include_bytes!("../res/icons/arrow-left.svg").to_vec(),
         Icons::Right => include_bytes!("../res/icons/arrow-right.svg").to_vec(),
+        Icons::Check => include_bytes!("../res/icons/check.svg").to_vec(),
     }
 }
 
@@ -142,7 +144,7 @@ pub fn bi<'a>(
     button_type: ButtonType,
 ) -> Button<'a, Message> {
     match button_type {
-        ButtonType::Primary => todo!(),
+        ButtonType::Primary => icon_primary_b(icon, on_click),
         ButtonType::Text => icon_text_b(icon, on_click),
         ButtonType::Danger => icon_danger_b(icon, on_click),
         ButtonType::Outlined => icon_outlined_b(icon, on_click),
@@ -195,17 +197,30 @@ fn icon_text_b<'a>(icon: Icons, on_click: Option<Message>) -> Button<'a, Message
     )
     .on_press_maybe(on_click)
     .style(|t, s| button::Style {
-        border: Border {
-            color: Color::TRANSPARENT,
-            radius: Radius::new(32),
-            width: 1.0,
-        },
+        border: Border::default().rounded(32),
         background: match s {
             button::Status::Hovered => Some(Background::Color(Color::parse("#32333D").unwrap())),
             _ => None,
         },
         text_color: button::text(t, Status::Active).text_color,
         ..button::text(t, s)
+    })
+    .padding(6)
+}
+
+fn icon_primary_b<'a>(icon: Icons, on_click: Option<Message>) -> Button<'a, Message> {
+    button(
+        svg(svg::Handle::from_memory(match_icon(icon)))
+            .style(|t, _| svg::Style {
+                color: Some(button::primary(t, Status::Active).text_color),
+            })
+            .width(20)
+            .height(20),
+    )
+    .on_press_maybe(on_click)
+    .style(|t, s| button::Style {
+        border: Border::default().rounded(32),
+        ..button::primary(t, s)
     })
     .padding(6)
 }
@@ -249,17 +264,17 @@ pub fn empty_b() -> Button<'static, Message> {
     })
 }
 
-pub fn mytext_input<'a>(
+pub fn mytext_input(
     placeholder: &str,
     value: &str,
-    input_on_click: &'a impl Fn(String) -> Message,
-    submit_on_click: Message,
-) -> TextInput<'a, Message> {
+    input_on_click: impl Fn(String) -> Message + 'static,
+    submit_on_click: Option<Message>,
+) -> TextInput<'static, Message> {
     text_input(placeholder, value)
         .style(custom_text_input_style)
         .padding(16)
         .on_input(input_on_click)
-        .on_submit(submit_on_click)
+        .on_submit_maybe(submit_on_click)
 }
 
 fn custom_text_input_style(theme: &Theme, status: text_input::Status) -> text_input::Style {
@@ -310,6 +325,7 @@ macro_rules! impl_paddable {
 
 impl_paddable!(Column<'a, Message, Theme, Renderer>);
 impl_paddable!(Row<'a, Message, Theme, Renderer>);
+impl_paddable!(Container<'a, Message, Theme, Renderer>);
 
 pub fn card<'a, T: Paddable<'a>>(content: T) -> Container<'a, Message> {
     container(
