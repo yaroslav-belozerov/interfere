@@ -16,8 +16,8 @@ pub fn create_endpoint(conn: &Connection, url: &str) -> RusqliteResult<u64> {
 pub fn delete_endpoint(conn: &Connection, id: u64) -> RusqliteResult<()> {
     // Delete all related records first (if you don't have CASCADE setup)
     conn.execute("DELETE FROM response WHERE parent_endpoint_id = ?", [id])?;
-    conn.execute("DELETE FROM query_param WHERE parent_endpoint_id = ?", [id])?;
-    conn.execute("DELETE FROM header WHERE parent_endpoint_id = ?", [id])?;
+    // conn.execute("DELETE FROM query_param WHERE parent_endpoint_id = ?", [id])?;
+    // conn.execute("DELETE FROM header WHERE parent_endpoint_id = ?", [id])?;
 
     // Delete the endpoint itself
     conn.execute("DELETE FROM endpoint WHERE id = ?", [id])?;
@@ -35,16 +35,16 @@ pub fn create_endpoint_full(conn: &Connection, endpoint: &Endpoint) -> RusqliteR
     // Insert responses
     for response in &endpoint.responses {
         create_response_with_tx(&tx, endpoint_id, &response.text, response.code)?;
-    }
 
-    // Insert query params
-    for qp in &endpoint.query_params {
-        create_query_param_with_tx(&tx, endpoint_id, &qp.key, &qp.value, qp.on)?;
-    }
+        // Insert query params
+        for qp in &response.query_params {
+            create_query_param_with_tx(&tx, response.id, &qp.key, &qp.value, qp.on)?;
+        }
 
-    // Insert headers
-    for header in &endpoint.headers {
-        create_header_with_tx(&tx, endpoint_id, &header.key, &header.value, header.on)?;
+        // Insert headers
+        for header in &response.headers {
+            create_header_with_tx(&tx, response.id, &header.key, &header.value, header.on)?;
+        }
     }
 
     tx.commit()?;

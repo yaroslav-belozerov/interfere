@@ -2,7 +2,7 @@ use crate::logic::common::Message;
 use iced::border::Radius;
 use iced::theme::Palette;
 use iced::widget::button::Status;
-use iced::widget::text::IntoFragment;
+use iced::widget::text::{Fragment, IntoFragment};
 use iced::widget::{
     button, container, row, svg, text, text_input, Button, Column, Container, Row, TextInput,
 };
@@ -90,11 +90,8 @@ fn danger_b<'a>(string: impl IntoFragment<'a>, on_click: Option<Message>) -> But
         .style(danger_button_style)
 }
 
-fn text_b<'a>(
-    content: impl Into<Element<'a, Message, Theme, Renderer>>,
-    on_click: Option<Message>,
-) -> Button<'a, Message> {
-    button(content)
+fn text_b<'a>(content: impl IntoFragment<'a>, on_click: Option<Message>) -> Button<'a, Message> {
+    button(text(content))
         .on_press_maybe(on_click)
         .style(|theme, status| button::Style {
             border: border::rounded(8),
@@ -126,7 +123,7 @@ fn outlined_b<'a>(string: impl IntoFragment<'a>, on_click: Option<Message>) -> B
 }
 
 pub fn bt<'a>(
-    content: &'a str,
+    content: impl IntoFragment<'a>,
     on_click: Option<Message>,
     button_type: ButtonType,
 ) -> Button<'a, Message> {

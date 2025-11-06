@@ -1,28 +1,28 @@
 use rusqlite::{Connection, Result as RusqliteResult};
 pub fn create_query_param(
     conn: &Connection,
-    parent_endpoint_id: u64,
+    parent_response_id: u64,
     key: &str,
     value: &str,
     on: bool,
 ) -> RusqliteResult<u64> {
     conn.execute(
-        "INSERT INTO query_param (parent_endpoint_id, key, value, is_on) VALUES (?, ?, ?, ?)",
-        rusqlite::params![parent_endpoint_id, key, value, on],
+        "INSERT INTO query_param (parent_response_id, key, value, is_on) VALUES (?, ?, ?, ?)",
+        rusqlite::params![parent_response_id, key, value, on],
     )?;
     Ok(conn.last_insert_rowid() as u64)
 }
 
 pub fn create_query_param_with_tx(
     tx: &rusqlite::Transaction,
-    parent_endpoint_id: u64,
+    parent_response_id: u64,
     key: &str,
     value: &str,
     on: bool,
 ) -> RusqliteResult<u64> {
     tx.execute(
-        "INSERT INTO query_param (parent_endpoint_id, key, value, is_on) VALUES (?, ?, ?, ?)",
-        rusqlite::params![parent_endpoint_id, key, value, on],
+        "INSERT INTO query_param (parent_response_id, key, value, is_on) VALUES (?, ?, ?, ?)",
+        rusqlite::params![parent_response_id, key, value, on],
     )?;
     Ok(tx.last_insert_rowid() as u64)
 }
@@ -32,13 +32,13 @@ pub fn delete_query_param(conn: &Connection, id: u64) -> RusqliteResult<()> {
     Ok(())
 }
 
-pub fn delete_query_params_by_endpoint(
+pub fn delete_query_params_by_response(
     conn: &Connection,
-    parent_endpoint_id: u64,
+    parent_response_id: u64,
 ) -> RusqliteResult<()> {
     conn.execute(
-        "DELETE FROM query_param WHERE parent_endpoint_id = ?",
-        [parent_endpoint_id],
+        "DELETE FROM query_param WHERE parent_response_id = ?",
+        [parent_response_id],
     )?;
     Ok(())
 }

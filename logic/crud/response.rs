@@ -15,26 +15,16 @@ pub fn create_response(
     Ok(conn.last_insert_rowid() as u64)
 }
 
-pub fn responses_by_endpoint_id(
+pub fn response_count_by_endpoint_id(
     conn: &rusqlite::Connection,
     id: u64,
-) -> Result<Vec<Response>, rusqlite::Error> {
+) -> Result<u64, rusqlite::Error> {
     let mut resp_stmt = conn.prepare(
-        "SELECT id, parent_endpoint_id, text, code, received_time 
+        "SELECT COUNT(*) 
              FROM response 
              WHERE parent_endpoint_id = ?",
     )?;
-    let responses: Vec<Response> = resp_stmt
-        .query_map([id], |row| {
-            Ok(Response {
-                id: row.get(0)?,
-                parent_endpoint_id: row.get(1)?,
-                text: row.get(2)?,
-                code: StatusCode::from_u16(row.get(3).unwrap()).unwrap(),
-                received_time: row.get(4)?,
-            })
-        })?
-        .collect::<Result<_, _>>()?;
+    let responses: u64 = resp_stmt.query_row([id], |it| it.get(0))?;
     Ok(responses)
 }
 
