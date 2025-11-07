@@ -32,7 +32,8 @@ impl State {
             Self {
                 draft: Default::default(),
                 draft_query: None,
-                endpoints: load_endpoints(&get_db().lock().unwrap()).unwrap(),
+                endpoints: load_endpoints(&get_db().lock().unwrap(), None).unwrap(),
+                endp_search: "".to_string(),
                 can_send: true,
                 selected_endpoint: None,
                 selected_response_index: 0,
@@ -73,7 +74,8 @@ fn update(state: &mut State, message: Message) -> Task<Message> {
         ]),
         Message::Start => focus("main_urlbar"),
         Message::RefetchDb => {
-            state.endpoints = load_endpoints(&get_db().lock().unwrap()).unwrap();
+            state.endpoints =
+                load_endpoints(&get_db().lock().unwrap(), Some(&state.endp_search)).unwrap();
             Task::none()
         }
         Message::SetSelectedResponseIndex(index) => {
@@ -273,6 +275,10 @@ fn update(state: &mut State, message: Message) -> Task<Message> {
             }
             update(state, Message::RefetchDb)
         }
+        Message::SetSearch(query) => {
+            state.endp_search = query;
+            update(state, Message::RefetchDb)
+        }
         Message::FormatResponse => {
             let current = state
                 .endpoints
@@ -390,24 +396,21 @@ pub fn main() -> iced::Result {
 fn endpoint_list(state: &State) -> Element<Message> {
     mr(
         column![
-            mb(
-                row![
-                    text("Interfere")
-                        .size(32)
-                        .font(Font {
-                            weight: Weight::Bold,
-                            ..GEIST_FONT
-                        })
-                        .color(state.theme.palette.primary),
-                    bi(Icons::Plus, Some(Message::Back), ButtonType::Outlined)
-                        .width(32)
-                        .height(32)
-                ]
-                .align_y(Center)
-                .spacing(8)
-                .into(),
-                16.0
-            ),
+            row![
+                text("Interfere")
+                    .size(32)
+                    .font(Font {
+                        weight: Weight::Bold,
+                        ..GEIST_FONT
+                    })
+                    .color(state.theme.palette.primary),
+                bi(Icons::Plus, Some(Message::Back), ButtonType::Outlined)
+                    .width(32)
+                    .height(32)
+            ]
+            .align_y(Center)
+            .spacing(8),
+            mytext_input("Search...", &state.endp_search, &Message::SetSearch, None).width(312),
             Column::from_iter(state.endpoints.iter().map(|el| {
                 row![
                     bt(
@@ -429,6 +432,7 @@ fn endpoint_list(state: &State) -> Element<Message> {
             }))
             .spacing(8)
         ]
+        .spacing(16.0)
         .into(),
         16.0,
     )

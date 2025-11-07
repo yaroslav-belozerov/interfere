@@ -63,12 +63,20 @@ pub fn init() -> Result<()> {
     tx.commit()
 }
 
-pub fn load_endpoints(conn: &rusqlite::Connection) -> Result<Vec<EndpointDb>, rusqlite::Error> {
+pub fn load_endpoints(
+    conn: &rusqlite::Connection,
+    query: Option<&str>,
+) -> Result<Vec<EndpointDb>, rusqlite::Error> {
     // First, get all endpoints
-    let mut stmt = conn.prepare("SELECT id, url FROM endpoint ORDER BY id DESC")?;
-    let endpoint_rows = stmt.query_map([], |row| {
-        Ok((row.get::<_, u64>(0)?, row.get::<_, String>(1)?))
-    })?;
+    let mut stmt =
+        conn.prepare("SELECT id, url FROM endpoint WHERE url LIKE (?) ORDER BY id DESC")?;
+    let endpoint_rows = stmt.query_map(
+        [match query {
+            Some(it) => format!("%{}%", it),
+            None => "%".to_string(),
+        }],
+        |row| Ok((row.get::<_, u64>(0)?, row.get::<_, String>(1)?)),
+    )?;
 
     let mut endpoints = Vec::new();
 
