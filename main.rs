@@ -1,8 +1,10 @@
 mod logic;
 
 use crate::AppTheme;
-use chrono::{Local, NaiveDateTime, TimeZone};
+use chrono::{DateTime, Local, NaiveDateTime, TimeZone};
+use iced::advanced::widget::operation::text_input;
 use iced::font::Weight;
+use iced::keyboard::Modifiers;
 use iced::theme::Palette;
 use iced::widget::scrollable::Scrollbar;
 use iced::widget::text_input::focus;
@@ -18,7 +20,9 @@ use logic::crud::query::{
     create_query_param, create_query_param_with_tx, delete_query_param, update_query_param_key,
     update_query_param_on, update_query_param_value,
 };
-use logic::crud::response::{create_response, delete_response, response_count_by_endpoint_id};
+use logic::crud::response::{
+    create_response, delete_response, response_count_by_endpoint_id, update_response,
+};
 use logic::db::{get_db, init, load_endpoints};
 use logic::ui::*;
 use markup_fmt::{format_text, Language};
@@ -51,6 +55,26 @@ impl State {
             Task::perform(async {}, |_| Message::Start),
         )
     }
+}
+
+fn create_new_endpoint(state: &mut State, parent_id: u64, text: &str, code: StatusCode) {
+    let resp_id = create_response(&get_db().lock().unwrap(), parent_id, &text, code).unwrap();
+    match &state.draft_query {
+        Some(d) => {
+            let mut db = get_db().lock().unwrap();
+            let tx = db.transaction().unwrap();
+            for q in d {
+                create_query_param_with_tx(&tx, resp_id, &q.key, &q.value, q.on).unwrap();
+            }
+            tx.commit().unwrap();
+            state.draft_query = None;
+        }
+        None => {}
+    }
+    state.selected_response_index = max(
+        response_count_by_endpoint_id(&get_db().lock().unwrap(), parent_id).unwrap() as usize - 1,
+        0,
+    );
 }
 
 fn update(state: &mut State, message: Message) -> Task<Message> {
@@ -105,29 +129,25 @@ fn update(state: &mut State, message: Message) -> Task<Message> {
         Message::GotResponse(text, code) => {
             state.can_send = true;
             match state.selected_endpoint {
-                Some(id) => {
-                    let resp_id =
-                        create_response(&get_db().lock().unwrap(), id, &text, code).unwrap();
-                    match &state.draft_query {
-                        Some(d) => {
-                            let mut db = get_db().lock().unwrap();
-                            let tx = db.transaction().unwrap();
-                            for q in d {
-                                create_query_param_with_tx(&tx, resp_id, &q.key, &q.value, q.on)
-                                    .unwrap();
-                            }
-                            tx.commit().unwrap();
-                            state.draft_query = None;
+                Some(id) => match current_response(state) {
+                    Some(current_response) => {
+                        if state.draft_query.is_none() {
+                            update_response(
+                                &get_db().lock().unwrap(),
+                                current_response.id,
+                                &text,
+                                code,
+                                Local::now().naive_utc(),
+                            )
+                            .unwrap();
+                        } else {
+                            create_new_endpoint(state, id, &text, code);
                         }
-                        None => {}
                     }
-                    state.selected_response_index = max(
-                        response_count_by_endpoint_id(&get_db().lock().unwrap(), id).unwrap()
-                            as usize
-                            - 1,
-                        0,
-                    );
-                }
+                    None => {
+                        create_new_endpoint(state, id, &text, code);
+                    }
+                },
                 None => {
                     let id = create_endpoint_full(
                         &get_db().lock().unwrap(),
@@ -208,10 +228,10 @@ fn update(state: &mut State, message: Message) -> Task<Message> {
             Task::none()
         }
         Message::ClickDeleteEndpoint(id) => {
+            delete_endpoint(&get_db().lock().unwrap(), id).unwrap();
             match state.selected_endpoint {
                 Some(selected_id) => {
                     if id == selected_id {
-                        delete_endpoint(&get_db().lock().unwrap(), selected_id).unwrap();
                         if state.draft_query.is_some() {
                             state.draft_query = None;
                         }
@@ -298,6 +318,78 @@ fn update(state: &mut State, message: Message) -> Task<Message> {
             };
             Task::none()
         }
+        Message::Focus(it) => focus(it),
+        Message::DecrementSelectedResponseIndex => match state.draft_query {
+            Some(_) => {
+                state.draft_query = None;
+                Task::none()
+            }
+            None => update(
+                state,
+                Message::SetSelectedResponseIndex(usize::max(state.selected_response_index, 1) - 1),
+            ),
+        },
+        Message::IncrementSelectedResponseIndex => match current_endpoint(state) {
+            Some(endpoint) => update(
+                state,
+                if state.selected_response_index < endpoint.responses.len() - 1 {
+                    Message::SetSelectedResponseIndex(usize::min(
+                        state.selected_response_index + 1,
+                        current_endpoint(state).unwrap().responses.len() - 1,
+                    ))
+                } else {
+                    Message::SetDraftQuery(false)
+                },
+            ),
+            None => Task::none(),
+        },
+        Message::IncrementSelectedEndpoint => update(
+            state,
+            Message::ClickEndpoint(match current_endpoint(state) {
+                Some(endpoint) => {
+                    let curr_index = state
+                        .endpoints
+                        .iter()
+                        .position(|it| it.id == endpoint.id)
+                        .unwrap();
+                    match state
+                        .endpoints
+                        .get(usize::min(curr_index, state.endpoints.len() - 1) + 1)
+                    {
+                        Some(n) => n.id,
+                        None => {
+                            return Task::none();
+                        }
+                    }
+                }
+                None => match state.endpoints.get(0) {
+                    Some(n) => n.id,
+                    None => return Task::none(),
+                },
+            }),
+        ),
+        Message::DecrementSelectedEndpoint => update(
+            state,
+            Message::ClickEndpoint(match current_endpoint(state) {
+                Some(endpoint) => {
+                    let curr_index = state
+                        .endpoints
+                        .iter()
+                        .position(|it| it.id == endpoint.id)
+                        .unwrap();
+                    match state.endpoints.get(usize::max(curr_index, 1) - 1) {
+                        Some(n) => n.id,
+                        None => {
+                            return Task::none();
+                        }
+                    }
+                }
+                None => match state.endpoints.get(state.endpoints.len() - 1) {
+                    Some(n) => n.id,
+                    None => return Task::none(),
+                },
+            }),
+        ),
         Message::Empty => Task::none(),
     }
 }
@@ -410,13 +502,19 @@ fn endpoint_list(state: &State) -> Element<Message> {
             ]
             .align_y(Center)
             .spacing(8),
-            mytext_input("Search...", &state.endp_search, &Message::SetSearch, None).width(312),
+            mytext_input("Search...", &state.endp_search, &Message::SetSearch, None)
+                .width(312)
+                .id("searchbar"),
             Column::from_iter(state.endpoints.iter().map(|el| {
                 row![
                     bt(
                         el.url.strip_prefix("https://").unwrap(),
                         Some(Message::ClickEndpoint(el.id)),
-                        ButtonType::Text
+                        if state.selected_endpoint == Some(el.id) {
+                            ButtonType::Primary
+                        } else {
+                            ButtonType::Text
+                        }
                     )
                     .width(Fill),
                     bi(
@@ -500,68 +598,67 @@ fn content(state: &State) -> Column<Message> {
     }
 }
 
-fn query_param_panel(
-    state: &State,
-    endpoint: &EndpointDb,
-) -> container::Container<'static, Message> {
-    let query_params = match endpoint.responses.get(state.selected_response_index) {
-        Some(resp) => Column::from_iter(
-            (match &state.draft_query {
-                Some(drafts) => drafts,
-                None => &resp.query_params,
-            })
-            .iter()
-            .map(|it| {
-                container(
-                    row![
-                        mytext_input(
-                            "Name",
-                            &it.key,
-                            {
-                                let it = it.clone();
-                                move |new_content| Message::SetQueryParamKey(it.id, new_content)
-                            },
-                            None
-                        )
-                        .id(format!("query_param_{}", it.id)),
-                        mytext_input(
-                            "Value",
-                            &it.value,
-                            {
-                                let it = it.clone();
-                                move |new_content| Message::SetQueryParamContent(it.id, new_content)
-                            },
-                            None
-                        ),
-                        bi(
-                            Icons::Check,
-                            Some(Message::ToggleQueryParamIsOn(it.id)),
-                            if it.on {
-                                ButtonType::Primary
-                            } else {
-                                ButtonType::Text
-                            }
-                        ),
-                        bi(
-                            Icons::Delete,
-                            Some(Message::DeleteQueryParam(it.id)),
+fn query_row<'a>(it: &'a EndpointKvPair, state: &'a State) -> container::Container<'a, Message> {
+    container(
+        match &state.draft_query {
+            Some(_) => {
+                row![
+                    mytext_input(
+                        "Name",
+                        &it.key,
+                        {
+                            let it = it.clone();
+                            move |new_content| Message::SetQueryParamKey(it.id, new_content)
+                        },
+                        None
+                    )
+                    .id(format!("query_param_{}", it.id)),
+                    mytext_input(
+                        "Value",
+                        &it.value,
+                        {
+                            let it = it.clone();
+                            move |new_content| Message::SetQueryParamContent(it.id, new_content)
+                        },
+                        None,
+                    ),
+                    bi(
+                        Icons::Check,
+                        Some(Message::ToggleQueryParamIsOn(it.id)),
+                        if it.on {
+                            ButtonType::Primary
+                        } else {
                             ButtonType::Text
-                        )
-                    ]
-                    .align_y(Center)
-                    .spacing(8),
-                )
-                .style(|t| container::Style {
-                    border: Border::default().rounded(16),
-                    background: Some(iced::Background::Color(t.palette().background)),
-                    ..container::Style::default()
-                })
-                .into()
-            }),
-        )
+                        },
+                    ),
+                    bi(
+                        Icons::Delete,
+                        Some(Message::DeleteQueryParam(it.id)),
+                        ButtonType::Text,
+                    )
+                ]
+            }
+            None => {
+                row![
+                    Element::from(card(row![text(&it.key).width(Fill)])),
+                    Element::from(card(row![text(&it.value)].width(Fill))),
+                ]
+            }
+        }
+        .align_y(Center)
         .spacing(8),
-        None => column![],
-    };
+    )
+    .style(|t| container::Style {
+        border: Border::default().rounded(16),
+        background: Some(iced::Background::Color(t.palette().background)),
+        ..container::Style::default()
+    })
+}
+
+fn query_param_panel<'a>(
+    state: &'a State,
+    endpoint: &'a EndpointDb,
+) -> container::Container<'a, Message> {
     container(
         column![
             row![
@@ -579,7 +676,18 @@ fn query_param_panel(
             ]
             .padding([0, 8])
             .align_y(Center),
-            query_params
+            match endpoint.responses.get(state.selected_response_index) {
+                Some(resp) => Column::from_iter(
+                    (match &state.draft_query {
+                        Some(drafts) => drafts,
+                        None => &resp.query_params,
+                    })
+                    .iter()
+                    .map(|it| query_row(it, state).into()),
+                )
+                .spacing(8),
+                None => column![],
+            }
         ]
         .spacing(16),
     )
@@ -766,9 +874,45 @@ async fn send_get_request(url: String) -> Result<(String, StatusCode), MyErr> {
 }
 
 fn subscription(_state: &State) -> Subscription<Message> {
-    keyboard::on_key_press(|key, _mods| match key {
+    keyboard::on_key_press(|key, mods| match key {
         keyboard::key::Key::Named(keyboard::key::Named::Enter) => Some(Message::Send),
         keyboard::key::Key::Named(keyboard::key::Named::Escape) => Some(Message::Back),
+        keyboard::key::Key::Named(keyboard::key::Named::ArrowLeft) => {
+            if mods.contains(Modifiers::CTRL) {
+                Some(Message::IncrementSelectedResponseIndex)
+            } else {
+                None
+            }
+        }
+        keyboard::key::Key::Named(keyboard::key::Named::ArrowRight) => {
+            if mods.contains(Modifiers::CTRL) {
+                Some(Message::DecrementSelectedResponseIndex)
+            } else {
+                None
+            }
+        }
+        keyboard::key::Key::Named(keyboard::key::Named::ArrowDown) => {
+            if mods.contains(Modifiers::CTRL) {
+                Some(Message::IncrementSelectedEndpoint)
+            } else {
+                None
+            }
+        }
+        keyboard::key::Key::Named(keyboard::key::Named::ArrowUp) => {
+            if mods.contains(Modifiers::CTRL) {
+                Some(Message::DecrementSelectedEndpoint)
+            } else {
+                None
+            }
+        }
+        keyboard::key::Key::Character(key) => {
+            if mods.contains(Modifiers::CTRL) && key == "f" {
+                Some(Message::Focus("searchbar"))
+            } else {
+                None
+            }
+        }
+
         _ => None,
     })
 }

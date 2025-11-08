@@ -1,3 +1,4 @@
+use chrono::NaiveDateTime;
 use reqwest::StatusCode;
 use rusqlite::{Connection, Result as RusqliteResult};
 
@@ -63,10 +64,11 @@ pub fn update_response(
     id: u64,
     text: &str,
     code: StatusCode,
+    received_time: NaiveDateTime,
 ) -> RusqliteResult<()> {
     conn.execute(
-        "UPDATE response SET text = ?, code = ? WHERE id = ?",
-        rusqlite::params![text, code.as_u16() as i64, id],
+        "UPDATE response SET text = ?, code = ?, received_time = ? WHERE id = ?",
+        rusqlite::params![text, code.as_u16() as i64, received_time, id],
     )?;
     Ok(())
 }

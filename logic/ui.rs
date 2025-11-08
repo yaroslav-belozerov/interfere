@@ -79,7 +79,7 @@ fn primary_b<'a>(
             .on_press_maybe(on_click)
             .style(primary_button_style)
         }
-        None => button(text(string).align_x(Center))
+        None => button(text(string))
             .on_press_maybe(on_click)
             .style(primary_button_style),
     }
@@ -249,16 +249,19 @@ fn icon_outlined_b<'a>(icon: Icons, on_click: Option<Message>) -> Button<'a, Mes
 }
 
 pub fn empty_b() -> Button<'static, Message> {
-    button("").style(|_, _| button::Style {
-        background: None,
-        border: Border {
-            color: Color::TRANSPARENT,
-            width: 0.0,
-            radius: Radius::new(0),
-        },
-        shadow: Shadow::default(),
-        text_color: Color::TRANSPARENT,
-    })
+    button("")
+        .style(|_, _| button::Style {
+            background: None,
+            border: Border {
+                color: Color::TRANSPARENT,
+                width: 0.0,
+                radius: Radius::new(0),
+            },
+            shadow: Shadow::default(),
+            text_color: Color::TRANSPARENT,
+        })
+        .width(0)
+        .height(0)
 }
 
 pub fn mytext_input(
