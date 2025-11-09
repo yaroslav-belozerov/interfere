@@ -593,7 +593,11 @@ fn endpoint_list(state: &State) -> Element<Message> {
 
 fn send_button(state: &State) -> Button<Message> {
     bti(
-        "Send",
+        if state.draft_request.is_none() && current_response(state).is_some() {
+            "Rerun"
+        } else {
+            "Send"
+        },
         Icons::Enter,
         if state.can_send {
             Some(Message::Send)
@@ -812,7 +816,8 @@ fn query_param_panel<'a>(
             ]
             .spacing(16)
             .padding([0, 8])
-            .align_y(Center),
+            .align_y(Center)
+            .width(Fill),
             match &state.draft_request {
                 Some(drafts) => {
                     Column::from_iter(
