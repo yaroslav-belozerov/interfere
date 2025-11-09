@@ -7,6 +7,7 @@ use std::fmt::Display;
 pub enum Message {
     SetDraft(String),
     Send,
+    SendDraft,
     Back,
     RefetchDb,
     SetSelectedResponseIndex(usize),
@@ -18,7 +19,8 @@ pub enum Message {
     ClickEndpoint(u64),
     ClickDeleteEndpoint(u64),
     ClickDeleteResponse(u64),
-    GotResponse(String, StatusCode),
+    GotResponse(String, StatusCode, bool),
+    DiscardDraftResponse,
     GotError(MyErr),
     Duplicate(String),
     AddQueryParam(),
@@ -30,7 +32,6 @@ pub enum Message {
     SetSearch(String),
     FormatResponse,
     Start,
-    Empty,
 }
 
 #[derive(Debug, Clone)]
@@ -46,19 +47,18 @@ pub struct EndpointDb {
     pub responses: Vec<Response>,
 }
 
-#[derive(Debug, Clone)]
-pub struct Endpoint {
-    pub id: u64,
-    pub url: String,
-}
-
 #[derive(Default, Debug, Clone)]
 pub struct Response {
     pub id: u64,
     pub parent_endpoint_id: u64,
+    pub request: Request,
     pub text: String,
     pub code: StatusCode,
     pub received_time: NaiveDateTime,
+}
+
+#[derive(Default, Debug, Clone)]
+pub struct Request {
     pub query_params: Vec<EndpointKvPair>,
     pub headers: Vec<EndpointKvPair>,
 }
@@ -77,7 +77,8 @@ pub struct State {
     pub endpoints: Vec<EndpointDb>,
     pub selected_endpoint: Option<u64>,
     pub draft: String,
-    pub draft_query: Option<Vec<EndpointKvPair>>,
+    pub draft_request: Option<Request>,
+    pub draft_response: Option<(StatusCode, String, NaiveDateTime)>,
     pub endp_search: String,
     pub selected_response_index: usize,
     pub formatted_response: Option<String>,

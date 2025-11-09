@@ -13,7 +13,7 @@ use iced::widget::{
 };
 use iced::Alignment::Center;
 use iced::Length::{Fill, Shrink};
-use iced::{keyboard, Border, Color, Element, Font, Subscription, Task, Theme};
+use iced::{keyboard, Border, Color, Element, Font, Renderer, Subscription, Task, Theme};
 use logic::common::*;
 use logic::crud::endpoint::{self, create_endpoint_full, delete_endpoint};
 use logic::crud::query::{
@@ -35,7 +35,8 @@ impl State {
         (
             Self {
                 draft: Default::default(),
-                draft_query: None,
+                draft_request: None,
+                draft_response: None,
                 endpoints: load_endpoints(&get_db().lock().unwrap(), None).unwrap(),
                 endp_search: "".to_string(),
                 can_send: true,
@@ -59,15 +60,16 @@ impl State {
 
 fn create_new_endpoint(state: &mut State, parent_id: u64, text: &str, code: StatusCode) {
     let resp_id = create_response(&get_db().lock().unwrap(), parent_id, &text, code).unwrap();
-    match &state.draft_query {
+    match &state.draft_request {
         Some(d) => {
             let mut db = get_db().lock().unwrap();
             let tx = db.transaction().unwrap();
-            for q in d {
+            for q in &d.query_params {
                 create_query_param_with_tx(&tx, resp_id, &q.key, &q.value, q.on).unwrap();
             }
             tx.commit().unwrap();
-            state.draft_query = None;
+            state.draft_response = None;
+            state.draft_request = None;
         }
         None => {}
     }
@@ -83,12 +85,15 @@ fn update(state: &mut State, message: Message) -> Task<Message> {
             if copy {
                 match current_response(state) {
                     Some(resp) => {
-                        state.draft_query = Some(resp.query_params.clone());
+                        state.draft_request = Some(resp.request.clone());
                     }
                     None => {}
                 }
             } else {
-                state.draft_query = Some(Vec::new());
+                state.draft_request = Some(Request {
+                    query_params: Vec::new(),
+                    headers: Vec::new(),
+                });
             }
             Task::none()
         }
@@ -105,7 +110,8 @@ fn update(state: &mut State, message: Message) -> Task<Message> {
         Message::SetSelectedResponseIndex(index) => {
             state.formatted_response = None;
             state.selected_response_index = index;
-            state.draft_query = None;
+            state.draft_response = None;
+            state.draft_request = None;
             Task::none()
         }
         Message::SetDraft(string) => {
@@ -117,60 +123,87 @@ fn update(state: &mut State, message: Message) -> Task<Message> {
             Task::perform(
                 send_get_request(format_url_from_state(state)),
                 |res| match res {
-                    Ok((text, code)) => Message::GotResponse(text, code),
+                    Ok((text, code)) => Message::GotResponse(text, code, false),
+                    Err(err) => Message::GotError(err),
+                },
+            )
+        }
+        Message::SendDraft => {
+            state.can_send = false;
+            Task::perform(
+                send_get_request(format_url_from_state(state)),
+                |res| match res {
+                    Ok((text, code)) => Message::GotResponse(text, code, true),
                     Err(err) => Message::GotError(err),
                 },
             )
         }
         Message::Back => {
-            state.selected_endpoint = None;
-            focus("main_urlbar")
+            if state.draft_response.is_none() {
+                state.selected_endpoint = None;
+                focus("main_urlbar")
+            } else {
+                update(state, Message::DiscardDraftResponse)
+            }
         }
-        Message::GotResponse(text, code) => {
+        Message::GotResponse(text, code, is_draft) => {
             state.can_send = true;
-            match state.selected_endpoint {
-                Some(id) => match current_response(state) {
-                    Some(current_response) => {
-                        if state.draft_query.is_none() {
-                            update_response(
-                                &get_db().lock().unwrap(),
-                                current_response.id,
-                                &text,
-                                code,
-                                Local::now().naive_utc(),
-                            )
-                            .unwrap();
-                        } else {
+            if is_draft {
+                match &mut state.draft_response {
+                    Some(d) => {
+                        d.0 = code;
+                        d.1 = text;
+                        d.2 = Local::now().naive_local();
+                    }
+                    None => state.draft_response = Some((code, text, Local::now().naive_local())),
+                }
+            } else {
+                match state.selected_endpoint {
+                    Some(id) => match current_response(state) {
+                        Some(current_response) => {
+                            if state.draft_request.is_none() {
+                                update_response(
+                                    &get_db().lock().unwrap(),
+                                    current_response.id,
+                                    &text,
+                                    code,
+                                    Local::now().naive_utc(),
+                                )
+                                .unwrap();
+                            } else {
+                                create_new_endpoint(state, id, &text, code);
+                            }
+                        }
+                        None => {
                             create_new_endpoint(state, id, &text, code);
                         }
-                    }
+                    },
                     None => {
-                        create_new_endpoint(state, id, &text, code);
-                    }
-                },
-                None => {
-                    let id = create_endpoint_full(
-                        &get_db().lock().unwrap(),
-                        &EndpointDb {
-                            id: 0,
-                            url: state.draft.clone(),
-                            responses: [Response {
+                        let id = create_endpoint_full(
+                            &get_db().lock().unwrap(),
+                            &EndpointDb {
                                 id: 0,
-                                parent_endpoint_id: 0,
-                                text,
-                                code,
-                                received_time: NaiveDateTime::default(),
-                                query_params: [].to_vec(),
-                                headers: [].to_vec(),
-                            }]
-                            .to_vec(),
-                        },
-                    )
-                    .unwrap();
-                    return Task::batch([
-                        update(state, Message::ClickEndpoint(id)),
-                        update(state, Message::RefetchDb),
-                    ]);
+                                url: state.draft.clone(),
+                                responses: [Response {
+                                    id: 0,
+                                    parent_endpoint_id: 0,
+                                    text: text.to_string(),
+                                    code,
+                                    received_time: NaiveDateTime::default(),
+                                    request: Request {
+                                        query_params: [].to_vec(),
+                                        headers: [].to_vec(),
+                                    },
+                                }]
+                                .to_vec(),
+                            },
+                        )
+                        .unwrap();
+                        return Task::batch([
+                            update(state, Message::ClickEndpoint(id)),
+                            update(state, Message::RefetchDb),
+                        ]);
+                    }
                 }
             }
             state.draft = "".to_string();
@@ -180,10 +213,10 @@ fn update(state: &mut State, message: Message) -> Task<Message> {
             state.can_send = true;
             Task::none()
         }
-        Message::AddQueryParam() => match &mut state.draft_query {
+        Message::AddQueryParam() => match &mut state.draft_request {
             Some(q) => {
-                q.push(EndpointKvPair {
-                    id: q.len() as u64,
+                q.query_params.push(EndpointKvPair {
+                    id: q.query_params.len() as u64,
                     parent_response_id: 0,
                     key: "".to_string(),
                     value: "".to_string(),
@@ -191,11 +224,24 @@ fn update(state: &mut State, message: Message) -> Task<Message> {
                 });
                 Task::none()
             }
-            None => Task::none(),
+            None => {
+                state.draft_request = Some(Request {
+                    query_params: [EndpointKvPair {
+                        id: 0,
+                        parent_response_id: 0,
+                        key: "".to_string(),
+                        value: "".to_string(),
+                        on: true,
+                    }]
+                    .to_vec(),
+                    headers: [].to_vec(),
+                });
+                Task::none()
+            }
         },
-        Message::SetQueryParamContent(id, content) => match &mut state.draft_query {
+        Message::SetQueryParamContent(id, content) => match &mut state.draft_request {
             Some(q) => {
-                if let Some(elem) = q.iter_mut().find(|it| it.id == id) {
+                if let Some(elem) = q.query_params.iter_mut().find(|it| it.id == id) {
                     elem.value = content.clone();
                 };
                 Task::none()
@@ -205,9 +251,9 @@ fn update(state: &mut State, message: Message) -> Task<Message> {
                 update(state, Message::RefetchDb)
             }
         },
-        Message::SetQueryParamKey(id, content) => match &mut state.draft_query {
+        Message::SetQueryParamKey(id, content) => match &mut state.draft_request {
             Some(q) => {
-                if let Some(elem) = q.iter_mut().find(|it| it.id == id) {
+                if let Some(elem) = q.query_params.iter_mut().find(|it| it.id == id) {
                     elem.key = content.clone();
                 };
                 Task::none()
@@ -220,7 +266,8 @@ fn update(state: &mut State, message: Message) -> Task<Message> {
 
         Message::ClickEndpoint(id) => {
             state.formatted_response = None;
-            state.draft_query = None;
+            state.draft_request = None;
+            state.draft_response = None;
             state.selected_endpoint = Some(id);
             let count =
                 response_count_by_endpoint_id(&get_db().lock().unwrap(), id).unwrap() as usize;
@@ -232,9 +279,6 @@ fn update(state: &mut State, message: Message) -> Task<Message> {
             match state.selected_endpoint {
                 Some(selected_id) => {
                     if id == selected_id {
-                        if state.draft_query.is_some() {
-                            state.draft_query = None;
-                        }
                         state.selected_endpoint = None;
                     }
                 }
@@ -242,9 +286,9 @@ fn update(state: &mut State, message: Message) -> Task<Message> {
             }
             update(state, Message::RefetchDb)
         }
-        Message::ToggleQueryParamIsOn(id) => match &mut state.draft_query {
+        Message::ToggleQueryParamIsOn(id) => match &mut state.draft_request {
             Some(q) => {
-                if let Some(elem) = q.iter_mut().find(|it| it.id == id) {
+                if let Some(elem) = q.query_params.iter_mut().find(|it| it.id == id) {
                     elem.on = !elem.on;
                 };
                 Task::none()
@@ -254,9 +298,9 @@ fn update(state: &mut State, message: Message) -> Task<Message> {
                 update(state, Message::RefetchDb)
             }
         },
-        Message::ClickDeleteResponse(id) => match state.draft_query {
+        Message::ClickDeleteResponse(id) => match state.draft_response {
             Some(_) => {
-                state.draft_query = None;
+                state.draft_response = None;
                 Task::none()
             }
             None => {
@@ -282,10 +326,10 @@ fn update(state: &mut State, message: Message) -> Task<Message> {
             }
         },
         Message::DeleteQueryParam(id) => {
-            match &mut state.draft_query {
-                Some(draft) => match draft.iter().position(|it| it.id == id) {
+            match &mut state.draft_request {
+                Some(draft) => match draft.query_params.iter().position(|it| it.id == id) {
                     Some(found) => {
-                        draft.remove(found);
+                        draft.query_params.remove(found);
                     }
                     None => {}
                 },
@@ -311,7 +355,12 @@ fn update(state: &mut State, message: Message) -> Task<Message> {
                         Some(resp) => {
                             state.formatted_response = Some(format_response(&resp.text));
                         }
-                        None => {}
+                        None => match &state.draft_response {
+                            Some(draft_resp) => {
+                                state.formatted_response = Some(format_response(&draft_resp.1))
+                            }
+                            None => {}
+                        },
                     }
                 }
                 None => {}
@@ -319,9 +368,10 @@ fn update(state: &mut State, message: Message) -> Task<Message> {
             Task::none()
         }
         Message::Focus(it) => focus(it),
-        Message::DecrementSelectedResponseIndex => match state.draft_query {
+        Message::DecrementSelectedResponseIndex => match state.draft_response {
             Some(_) => {
-                state.draft_query = None;
+                state.draft_response = None;
+                state.draft_request = None;
                 Task::none()
             }
             None => update(
@@ -335,7 +385,7 @@ fn update(state: &mut State, message: Message) -> Task<Message> {
                 if state.selected_response_index < endpoint.responses.len() - 1 {
                     Message::SetSelectedResponseIndex(usize::min(
                         state.selected_response_index + 1,
-                        current_endpoint(state).unwrap().responses.len() - 1,
+                        endpoint.responses.len() - 1,
                     ))
                 } else {
                     Message::SetDraftQuery(false)
@@ -343,6 +393,11 @@ fn update(state: &mut State, message: Message) -> Task<Message> {
             ),
             None => Task::none(),
         },
+        Message::DiscardDraftResponse => {
+            state.draft_response = None;
+            state.formatted_response = None;
+            Task::none()
+        }
         Message::IncrementSelectedEndpoint => update(
             state,
             Message::ClickEndpoint(match current_endpoint(state) {
@@ -390,7 +445,6 @@ fn update(state: &mut State, message: Message) -> Task<Message> {
                 },
             }),
         ),
-        Message::Empty => Task::none(),
     }
 }
 
@@ -591,7 +645,90 @@ fn content(state: &State) -> Column<Message> {
                     .into(),
                     16.0,
                 ),
-                row![query_param_panel(state, endpoint), response_panels(state)]
+                row![
+                    query_param_panel(state, endpoint),
+                    match &state.draft_response {
+                        Some(draft) => {
+                            ml(
+                                card(column![
+                                    mb(text("Draft response").into(), 8.0),
+                                    row![
+                                        bi(
+                                            Icons::Left,
+                                            Some(Message::DiscardDraftResponse),
+                                            ButtonType::Text
+                                        ),
+                                        row![
+                                            container(text!("{}", draft.0).style(|_| {
+                                                text::Style {
+                                                    color: Some(Color::BLACK),
+                                                }
+                                            }))
+                                            .padding([2, 4])
+                                            .style(
+                                                |_| {
+                                                    container::Style {
+                                                        background: Some(iced::Background::Color(
+                                                            color_for_status(draft.0),
+                                                        )),
+                                                        ..container::Style::default()
+                                                    }
+                                                }
+                                            ),
+                                            column![
+                                                text(draft.2.format("%H:%M:%S").to_string())
+                                                    .size(14)
+                                                    .line_height(1.0),
+                                                text(draft.2.format("%d-%m-%Y").to_string())
+                                                    .size(10)
+                                                    .line_height(0.9)
+                                            ]
+                                        ]
+                                        .align_y(Center)
+                                        .spacing(8)
+                                        .width(Fill),
+                                        bi(
+                                            Icons::Check,
+                                            Some(Message::FormatResponse),
+                                            ButtonType::Text
+                                        )
+                                    ]
+                                    .align_y(Center)
+                                    .spacing(8),
+                                    mb(
+                                        scrollable(match &state.formatted_response {
+                                            Some(fmt) => text(fmt),
+                                            None => text(&draft.1),
+                                        })
+                                        .direction(iced::widget::scrollable::Direction::Both {
+                                            vertical: Scrollbar::default(),
+                                            horizontal: Scrollbar::default()
+                                        })
+                                        .height(Fill)
+                                        .width(Fill)
+                                        .into(),
+                                        16.0
+                                    )
+                                    .padding([16, 0])
+                                ])
+                                .width(Fill)
+                                .into(),
+                                16.0,
+                            )
+                            .into()
+                        }
+                        None => {
+                            match current_response(state) {
+                                Some(resp) => response_panels(
+                                    resp,
+                                    state,
+                                    current_endpoint(state).unwrap().responses.len(),
+                                ),
+                                None => column!().into(),
+                            }
+                        }
+                    }
+                ]
             ]
         }
         None => column![draft_urlbar(state)],
@@ -600,7 +737,7 @@ fn content(state: &State) -> Column<Message> {
 
 fn query_row<'a>(it: &'a EndpointKvPair, state: &'a State) -> container::Container<'a, Message> {
     container(
-        match &state.draft_query {
+        match &state.draft_request {
             Some(_) => {
                 row![
                     mytext_input(
@@ -663,8 +800,7 @@ fn query_param_panel<'a>(
         column![
             row![
                 text("Query params"),
-                horizontal_space(),
-                if state.draft_query.is_none() {
+                if state.draft_request.is_none() && current_response(state).is_some() {
                     bt(
                         "Copy",
                         Some(Message::SetDraftQuery(true)),
@@ -674,20 +810,31 @@ fn query_param_panel<'a>(
                     bt("Add", Some(Message::AddQueryParam()), ButtonType::Primary)
                 }
             ]
+            .spacing(16)
             .padding([0, 8])
             .align_y(Center),
-            match endpoint.responses.get(state.selected_response_index) {
-                Some(resp) => Column::from_iter(
-                    (match &state.draft_query {
-                        Some(drafts) => drafts,
-                        None => &resp.query_params,
-                    })
-                    .iter()
-                    .map(|it| query_row(it, state).into()),
-                )
-                .spacing(8),
-                None => column![],
+            match &state.draft_request {
+                Some(drafts) => {
+                    Column::from_iter(
+                        drafts
+                            .query_params
+                            .iter()
+                            .map(|it| query_row(it, state).into()),
+                    )
+                }
+                None => {
+                    match endpoint.responses.get(state.selected_response_index) {
+                        Some(resp) => Column::from_iter(
+                            resp.request
+                                .query_params
+                                .iter()
+                                .map(|it| query_row(it, state).into()),
+                        ),
+                        None => column![],
+                    }
+                }
             }
+            .spacing(8)
         ]
         .spacing(16),
     )
@@ -700,159 +847,148 @@ fn query_param_panel<'a>(
 
 fn format_url_from_state(state: &State) -> String {
     match current_endpoint(state) {
-        Some(endpoint) => match endpoint.responses.get(state.selected_response_index) {
-            Some(resp) => {
-                let query_param_vec: Vec<String> = (match &state.draft_query {
-                    Some(drafts) => drafts,
-                    None => &resp.query_params,
-                })
-                .iter()
-                .filter(|it| !it.key.is_empty() && it.on)
-                .map(|it| {
-                    format!(
-                        "{}={}",
-                        urlencoding::encode(&it.key),
-                        urlencoding::encode(&it.value)
-                    )
-                })
-                .collect();
+        Some(endpoint) => {
+            let empty = [].to_vec().clone();
+            let query_param_vec: Vec<String> = (match &state.draft_request {
+                Some(drafts) => &drafts.query_params,
+                None => match endpoint.responses.get(state.selected_response_index) {
+                    Some(resp) => &resp.request.query_params,
+                    None => &empty,
+                },
+            })
+            .iter()
+            .filter(|it| !it.key.is_empty() && it.on)
+            .map(|it| {
                 format!(
-                    "{}{}{}",
-                    endpoint.url,
-                    if query_param_vec.is_empty() { "" } else { "?" },
-                    query_param_vec.join("&")
+                    "{}={}",
+                    urlencoding::encode(&it.key),
+                    urlencoding::encode(&it.value)
                 )
-            }
-            None => endpoint.url.clone(),
-        },
+            })
+            .collect();
+            format!(
+                "{}{}{}",
+                endpoint.url,
+                if query_param_vec.is_empty() { "" } else { "?" },
+                query_param_vec.join("&")
+            )
+        }
         None => state.draft.clone(),
     }
 }
 
-fn response_panels(state: &State) -> Element<Message> {
-    match current_endpoint(state) {
-        Some(e) => {
-            let current_response = e.responses.get(state.selected_response_index);
-            match current_response {
-                Some(resp) => {
-                    let time = Local::now().offset().from_utc_datetime(&resp.received_time);
-                    column![
-                        mb(
-                            ml(
-                                row![
-                                    bi(
-                                        Icons::Plus,
-                                        Some(Message::SetDraftQuery(false)),
-                                        if state.draft_query.is_none() {
-                                            ButtonType::Outlined
-                                        } else {
-                                            ButtonType::Primary
-                                        }
-                                    ),
-                                    scrollable(
-                                        Row::from_iter((1..e.responses.len() + 1).rev().map(
-                                            |index| {
-                                                bt(
-                                                    index,
-                                                    Some(Message::SetSelectedResponseIndex(
-                                                        index - 1,
-                                                    )),
-                                                    if index == state.selected_response_index + 1
-                                                        && state.draft_query.is_none()
-                                                    {
-                                                        ButtonType::Primary
-                                                    } else {
-                                                        ButtonType::Text
-                                                    },
-                                                )
-                                                .into()
-                                            }
-                                        ))
-                                        .spacing(4)
-                                        .align_y(Center)
-                                    )
-                                    .direction(scrollable::Direction::Horizontal(
-                                        Scrollbar::default().width(0).scroller_width(0)
-                                    ))
-                                    .width(Fill)
-                                ]
-                                .spacing(8)
-                                .align_y(Center)
-                                .into(),
-                                16.0
+fn response_panels<'a>(
+    resp: &'a Response,
+    state: &'a State,
+    resp_count: usize,
+) -> Element<'a, Message, Theme, Renderer> {
+    let time = Local::now().offset().from_utc_datetime(&resp.received_time);
+    column![
+        mb(
+            ml(
+                row![
+                    bi(
+                        Icons::Plus,
+                        Some(Message::SetDraftQuery(false)),
+                        if state.draft_request.is_none() {
+                            ButtonType::Outlined
+                        } else {
+                            ButtonType::Primary
+                        }
+                    ),
+                    scrollable(
+                        Row::from_iter((1..resp_count + 1).rev().map(|index| {
+                            bt(
+                                index,
+                                Some(Message::SetSelectedResponseIndex(index - 1)),
+                                if index == state.selected_response_index + 1
+                                    && state.draft_request.is_none()
+                                {
+                                    ButtonType::Primary
+                                } else {
+                                    ButtonType::Text
+                                },
                             )
-                            .into(),
-                            16.0
-                        ),
-                        ml(
-                            card(column![
-                                row![
-                                    row![
-                                        container(text!("{}", resp.code).style(|_| text::Style {
-                                            color: Some(Color::BLACK)
-                                        }))
-                                        .padding([2, 4])
-                                        .style(|_| {
-                                            container::Style {
-                                                background: Some(iced::Background::Color(
-                                                    color_for_status(resp.code),
-                                                )),
-                                                ..container::Style::default()
-                                            }
-                                        }),
-                                        column![
-                                            text(time.format("%H:%M:%S").to_string())
-                                                .size(14)
-                                                .line_height(1.0),
-                                            text(time.format("%d-%m-%Y").to_string())
-                                                .size(10)
-                                                .line_height(0.9)
-                                        ]
-                                    ]
-                                    .align_y(Center)
-                                    .spacing(8)
-                                    .width(Fill),
-                                    bi(
-                                        Icons::Check,
-                                        Some(Message::FormatResponse),
-                                        ButtonType::Text
-                                    ),
-                                    bi(
-                                        Icons::Delete,
-                                        Some(Message::ClickDeleteResponse(resp.id)),
-                                        ButtonType::Text
-                                    )
-                                ]
-                                .align_y(Center)
-                                .spacing(8),
-                                mb(
-                                    scrollable(match &state.formatted_response {
-                                        Some(fmt) => text(fmt),
-                                        None => text(&resp.text),
-                                    })
-                                    .direction(iced::widget::scrollable::Direction::Both {
-                                        vertical: Scrollbar::default(),
-                                        horizontal: Scrollbar::default()
-                                    })
-                                    .height(Fill)
-                                    .width(Fill)
-                                    .into(),
-                                    16.0
-                                )
-                                .padding([16, 0])
-                            ])
-                            .width(Fill)
-                            .into(),
-                            16.0,
-                        )
+                            .into()
+                        }))
+                        .spacing(4)
+                        .align_y(Center)
+                    )
+                    .direction(scrollable::Direction::Horizontal(
+                        Scrollbar::default().width(0).scroller_width(0)
+                    ))
+                    .width(Fill)
+                ]
+                .spacing(8)
+                .align_y(Center)
+                .into(),
+                16.0
+            )
+            .into(),
+            16.0
+        ),
+        ml(
+            card(column![
+                row![
+                    row![
+                        container(text!("{}", resp.code).style(|_| text::Style {
+                            color: Some(Color::BLACK)
+                        }))
+                        .padding([2, 4])
+                        .style(|_| {
+                            container::Style {
+                                background: Some(iced::Background::Color(color_for_status(
+                                    resp.code,
+                                ))),
+                                ..container::Style::default()
+                            }
+                        }),
+                        column![
+                            text(time.format("%H:%M:%S").to_string())
+                                .size(14)
+                                .line_height(1.0),
+                            text(time.format("%d-%m-%Y").to_string())
+                                .size(10)
+                                .line_height(0.9)
+                        ]
                     ]
-                }
-                None => column![],
-            }
+                    .align_y(Center)
+                    .spacing(8)
+                    .width(Fill),
+                    bi(
+                        Icons::Check,
+                        Some(Message::FormatResponse),
+                        ButtonType::Text
+                    ),
+                    bi(
+                        Icons::Delete,
+                        Some(Message::ClickDeleteResponse(resp.id)),
+                        ButtonType::Text
+                    )
+                ]
+                .align_y(Center)
+                .spacing(8),
+                mb(
+                    scrollable(match &state.formatted_response {
+                        Some(fmt) => text(fmt),
+                        None => text(&resp.text),
+                    })
+                    .direction(iced::widget::scrollable::Direction::Both {
+                        vertical: Scrollbar::default(),
+                        horizontal: Scrollbar::default()
+                    })
+                    .height(Fill)
+                    .width(Fill)
+                    .into(),
+                    16.0
+                )
+                .padding([16, 0])
+            ])
             .width(Fill)
-        }
-        None => column![],
-    }
+            .into(),
+            16.0,
+        )
+    ]
     .into()
 }
 
@@ -875,7 +1011,13 @@ async fn send_get_request(url: String) -> Result<(String, StatusCode), MyErr> {
 
 fn subscription(_state: &State) -> Subscription<Message> {
     keyboard::on_key_press(|key, mods| match key {
-        keyboard::key::Key::Named(keyboard::key::Named::Enter) => Some(Message::Send),
+        keyboard::key::Key::Named(keyboard::key::Named::Enter) => {
+            if mods.contains(Modifiers::CTRL) {
+                Some(Message::SendDraft)
+            } else {
+                Some(Message::Send)
+            }
+        }
         keyboard::key::Key::Named(keyboard::key::Named::Escape) => Some(Message::Back),
         keyboard::key::Key::Named(keyboard::key::Named::ArrowLeft) => {
             if mods.contains(Modifiers::CTRL) {

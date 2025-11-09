@@ -3,7 +3,7 @@ use std::sync::{Mutex, OnceLock};
 use reqwest::StatusCode;
 use rusqlite::{Connection, Result};
 
-use crate::{EndpointDb, EndpointKvPair, Response};
+use crate::{EndpointDb, EndpointKvPair, Request, Response};
 
 static DB: OnceLock<Mutex<Connection>> = OnceLock::new();
 
@@ -135,8 +135,10 @@ pub fn load_endpoints(
                     text: row.get(2)?,
                     code: StatusCode::from_u16(row.get(3).unwrap()).unwrap(),
                     received_time: row.get(4)?,
-                    query_params,
-                    headers,
+                    request: Request {
+                        query_params,
+                        headers,
+                    },
                 })
             })?
             .collect::<Result<_, _>>()?;

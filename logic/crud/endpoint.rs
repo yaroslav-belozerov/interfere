@@ -37,12 +37,12 @@ pub fn create_endpoint_full(conn: &Connection, endpoint: &Endpoint) -> RusqliteR
         create_response_with_tx(&tx, endpoint_id, &response.text, response.code)?;
 
         // Insert query params
-        for qp in &response.query_params {
+        for qp in &response.request.query_params {
             create_query_param_with_tx(&tx, response.id, &qp.key, &qp.value, qp.on)?;
         }
 
         // Insert headers
-        for header in &response.headers {
+        for header in &response.request.headers {
             create_header_with_tx(&tx, response.id, &header.key, &header.value, header.on)?;
         }
     }
