@@ -1,34 +1,38 @@
 mod logic;
 
 use crate::AppTheme;
-use chrono::{DateTime, Local, NaiveDateTime, TimeZone};
-use iced::advanced::widget::operation::text_input;
+use chrono::{Local, NaiveDateTime, TimeZone};
 use iced::font::Weight;
 use iced::keyboard::Modifiers;
 use iced::theme::Palette;
 use iced::widget::scrollable::Scrollbar;
 use iced::widget::text_input::focus;
 use iced::widget::{
-    button, column, container, horizontal_space, row, scrollable, svg, text, Button, Column, Row,
+    column, container, horizontal_space, row, scrollable, svg, text, Button, Column, Row,
 };
 use iced::Alignment::Center;
 use iced::Length::{Fill, Shrink};
 use iced::{keyboard, Border, Color, Element, Font, Renderer, Subscription, Task, Theme};
-use logic::common::*;
-use logic::crud::endpoint::{self, create_endpoint_full, delete_endpoint};
+use logic::crud::endpoint::{create_endpoint_full, delete_endpoint};
+use logic::crud::header::create_header_with_tx;
 use logic::crud::query::{
-    create_query_param, create_query_param_with_tx, delete_query_param, update_query_param_key,
-    update_query_param_on, update_query_param_value,
+    create_query_param_with_tx, delete_query_param, update_query_param_key, update_query_param_on,
+    update_query_param_value,
 };
 use logic::crud::response::{
     create_response, delete_response, response_count_by_endpoint_id, update_response,
 };
 use logic::db::{get_db, init, load_endpoints};
+use logic::message_handlers::{message_header, message_query_param};
 use logic::ui::*;
+use logic::{common::*, message_handlers};
 use markup_fmt::{format_text, Language};
+use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 use reqwest::StatusCode;
 use serde_json::Value;
 use std::cmp::max;
+use std::collections::HashMap;
+use std::str::FromStr;
 
 impl State {
     fn new() -> (Self, Task<Message>) {
@@ -67,6 +71,9 @@ fn create_new_endpoint(state: &mut State, parent_id: u64, text: &str, code: Stat
             for q in &d.query_params {
                 create_query_param_with_tx(&tx, resp_id, &q.key, &q.value, q.on).unwrap();
             }
+            for h in &d.headers {
+                create_header_with_tx(&tx, resp_id, &h.key, &h.value, h.on).unwrap();
+            }
             tx.commit().unwrap();
             state.draft_response = None;
             state.draft_request = None;
@@ -97,10 +104,13 @@ fn update(state: &mut State, message: Message) -> Task<Message> {
             }
             Task::none()
         }
-        Message::Duplicate(s) => Task::batch([
-            update(state, Message::Back),
-            update(state, Message::SetDraft(s)),
-        ]),
+        Message::Duplicate(s) => {
+            state.draft_response = None;
+            Task::batch([
+                update(state, Message::Back),
+                update(state, Message::SetDraft(s)),
+            ])
+        }
         Message::Start => focus("main_urlbar"),
         Message::RefetchDb => {
             state.endpoints =
@@ -120,23 +130,21 @@ fn update(state: &mut State, message: Message) -> Task<Message> {
         }
         Message::Send => {
             state.can_send = false;
-            Task::perform(
-                send_get_request(format_url_from_state(state)),
-                |res| match res {
-                    Ok((text, code)) => Message::GotResponse(text, code, false),
-                    Err(err) => Message::GotError(err),
-                },
-            )
+            let url = format_url_from_state(state);
+            let headers = headers_from_state(state);
+            Task::perform(send_get_request(url, headers), |res| match res {
+                Ok((text, code)) => Message::GotResponse(text, code, false),
+                Err(err) => Message::GotError(err),
+            })
         }
         Message::SendDraft => {
             state.can_send = false;
-            Task::perform(
-                send_get_request(format_url_from_state(state)),
-                |res| match res {
-                    Ok((text, code)) => Message::GotResponse(text, code, true),
-                    Err(err) => Message::GotError(err),
-                },
-            )
+            let url = format_url_from_state(state);
+            let headers = headers_from_state(state);
+            Task::perform(send_get_request(url, headers), |res| match res {
+                Ok((text, code)) => Message::GotResponse(text, code, true),
+                Err(err) => Message::GotError(err),
+            })
         }
         Message::Back => {
             if state.draft_response.is_none() {
@@ -213,57 +221,8 @@ fn update(state: &mut State, message: Message) -> Task<Message> {
             state.can_send = true;
             Task::none()
         }
-        Message::AddQueryParam() => match &mut state.draft_request {
-            Some(q) => {
-                q.query_params.push(EndpointKvPair {
-                    id: q.query_params.len() as u64,
-                    parent_response_id: 0,
-                    key: "".to_string(),
-                    value: "".to_string(),
-                    on: true,
-                });
-                Task::none()
-            }
-            None => {
-                state.draft_request = Some(Request {
-                    query_params: [EndpointKvPair {
-                        id: 0,
-                        parent_response_id: 0,
-                        key: "".to_string(),
-                        value: "".to_string(),
-                        on: true,
-                    }]
-                    .to_vec(),
-                    headers: [].to_vec(),
-                });
-                Task::none()
-            }
-        },
-        Message::SetQueryParamContent(id, content) => match &mut state.draft_request {
-            Some(q) => {
-                if let Some(elem) = q.query_params.iter_mut().find(|it| it.id == id) {
-                    elem.value = content.clone();
-                };
-                Task::none()
-            }
-            None => {
-                update_query_param_value(&get_db().lock().unwrap(), id, &content).unwrap();
-                update(state, Message::RefetchDb)
-            }
-        },
-        Message::SetQueryParamKey(id, content) => match &mut state.draft_request {
-            Some(q) => {
-                if let Some(elem) = q.query_params.iter_mut().find(|it| it.id == id) {
-                    elem.key = content.clone();
-                };
-                Task::none()
-            }
-            None => {
-                update_query_param_key(&get_db().lock().unwrap(), id, &content).unwrap();
-                update(state, Message::RefetchDb)
-            }
-        },
-
+        Message::QueryParam(message) => message_query_param(state, message),
+        Message::Header(message) => message_header(state, message),
         Message::ClickEndpoint(id) => {
             state.formatted_response = None;
             state.draft_request = None;
@@ -286,18 +245,6 @@ fn update(state: &mut State, message: Message) -> Task<Message> {
             }
             update(state, Message::RefetchDb)
         }
-        Message::ToggleQueryParamIsOn(id) => match &mut state.draft_request {
-            Some(q) => {
-                if let Some(elem) = q.query_params.iter_mut().find(|it| it.id == id) {
-                    elem.on = !elem.on;
-                };
-                Task::none()
-            }
-            None => {
-                update_query_param_on(&get_db().lock().unwrap(), id).unwrap();
-                update(state, Message::RefetchDb)
-            }
-        },
         Message::ClickDeleteResponse(id) => match state.draft_response {
             Some(_) => {
                 state.draft_response = None;
@@ -325,20 +272,6 @@ fn update(state: &mut State, message: Message) -> Task<Message> {
                 update(state, Message::RefetchDb)
             }
         },
-        Message::DeleteQueryParam(id) => {
-            match &mut state.draft_request {
-                Some(draft) => match draft.query_params.iter().position(|it| it.id == id) {
-                    Some(found) => {
-                        draft.query_params.remove(found);
-                    }
-                    None => {}
-                },
-                None => {
-                    delete_query_param(&get_db().lock().unwrap(), id).unwrap();
-                }
-            }
-            update(state, Message::RefetchDb)
-        }
         Message::SetSearch(query) => {
             state.endp_search = query;
             update(state, Message::RefetchDb)
@@ -562,7 +495,7 @@ fn endpoint_list(state: &State) -> Element<Message> {
             Column::from_iter(state.endpoints.iter().map(|el| {
                 row![
                     bt(
-                        el.url.strip_prefix("https://").unwrap(),
+                        strip_url(&el.url),
                         Some(Message::ClickEndpoint(el.id)),
                         if state.selected_endpoint == Some(el.id) {
                             ButtonType::Primary
@@ -650,7 +583,11 @@ fn content(state: &State) -> Column<Message> {
                     16.0,
                 ),
                 row![
-                    query_param_panel(state, endpoint),
+                    column![
+                        query_param_panel(state, endpoint),
+                        header_panel(state, endpoint)
+                    ]
+                    .spacing(16),
                     match &state.draft_response {
                         Some(draft) => {
                             ml(
@@ -739,7 +676,11 @@ fn content(state: &State) -> Column<Message> {
     }
 }
 
-fn query_row<'a>(it: &'a EndpointKvPair, state: &'a State) -> container::Container<'a, Message> {
+fn query_row<'a>(
+    it: &'a EndpointKvPair,
+    state: &'a State,
+    is_header: bool,
+) -> container::Container<'a, Message> {
     container(
         match &state.draft_request {
             Some(_) => {
@@ -749,7 +690,16 @@ fn query_row<'a>(it: &'a EndpointKvPair, state: &'a State) -> container::Contain
                         &it.key,
                         {
                             let it = it.clone();
-                            move |new_content| Message::SetQueryParamKey(it.id, new_content)
+                            move |new_content| {
+                                if is_header {
+                                    Message::Header(MHeader::SetHeaderKey(it.id, new_content))
+                                } else {
+                                    Message::QueryParam(MQueryParam::SetQueryParamKey(
+                                        it.id,
+                                        new_content,
+                                    ))
+                                }
+                            }
                         },
                         None
                     )
@@ -759,13 +709,26 @@ fn query_row<'a>(it: &'a EndpointKvPair, state: &'a State) -> container::Contain
                         &it.value,
                         {
                             let it = it.clone();
-                            move |new_content| Message::SetQueryParamContent(it.id, new_content)
+                            move |new_content| {
+                                if is_header {
+                                    Message::Header(MHeader::SetHeaderContent(it.id, new_content))
+                                } else {
+                                    Message::QueryParam(MQueryParam::SetQueryParamContent(
+                                        it.id,
+                                        new_content,
+                                    ))
+                                }
+                            }
                         },
                         None,
                     ),
                     bi(
                         Icons::Check,
-                        Some(Message::ToggleQueryParamIsOn(it.id)),
+                        Some(if is_header {
+                            Message::Header(MHeader::ToggleHeaderIsOn(it.id))
+                        } else {
+                            Message::QueryParam(MQueryParam::ToggleQueryParamIsOn(it.id))
+                        }),
                         if it.on {
                             ButtonType::Primary
                         } else {
@@ -774,7 +737,11 @@ fn query_row<'a>(it: &'a EndpointKvPair, state: &'a State) -> container::Contain
                     ),
                     bi(
                         Icons::Delete,
-                        Some(Message::DeleteQueryParam(it.id)),
+                        Some(if is_header {
+                            Message::Header(MHeader::DeleteHeader(it.id))
+                        } else {
+                            Message::QueryParam(MQueryParam::DeleteQueryParam(it.id))
+                        }),
                         ButtonType::Text,
                     )
                 ]
@@ -811,7 +778,11 @@ fn query_param_panel<'a>(
                         ButtonType::Outlined,
                     )
                 } else {
-                    bt("Add", Some(Message::AddQueryParam()), ButtonType::Primary)
+                    bt(
+                        "Add",
+                        Some(Message::QueryParam(MQueryParam::AddQueryParam())),
+                        ButtonType::Primary,
+                    )
                 }
             ]
             .spacing(16)
@@ -824,7 +795,7 @@ fn query_param_panel<'a>(
                         drafts
                             .query_params
                             .iter()
-                            .map(|it| query_row(it, state).into()),
+                            .map(|it| query_row(it, state, false).into()),
                     )
                 }
                 None => {
@@ -833,7 +804,7 @@ fn query_param_panel<'a>(
                             resp.request
                                 .query_params
                                 .iter()
-                                .map(|it| query_row(it, state).into()),
+                                .map(|it| query_row(it, state, false).into()),
                         ),
                         None => column![],
                     }
@@ -848,6 +819,73 @@ fn query_param_panel<'a>(
         background: Some(iced::Background::Color(t.palette().background)),
         ..container::Style::default()
     })
+}
+
+fn header_panel<'a>(
+    state: &'a State,
+    endpoint: &'a EndpointDb,
+) -> container::Container<'a, Message> {
+    container(
+        column![
+            row![
+                text("Headers"),
+                if state.draft_request.is_some() || current_response(state).is_none() {
+                    bt(
+                        "Add",
+                        Some(Message::Header(MHeader::AddHeader())),
+                        ButtonType::Primary,
+                    )
+                } else {
+                    empty_b()
+                }
+            ]
+            .spacing(16)
+            .padding([0, 8])
+            .align_y(Center)
+            .width(Fill),
+            match &state.draft_request {
+                Some(drafts) => {
+                    Column::from_iter(
+                        drafts
+                            .headers
+                            .iter()
+                            .map(|it| query_row(it, state, true).into()),
+                    )
+                }
+                None => {
+                    match endpoint.responses.get(state.selected_response_index) {
+                        Some(resp) => Column::from_iter(
+                            resp.request
+                                .headers
+                                .iter()
+                                .map(|it| query_row(it, state, true).into()),
+                        ),
+                        None => column![],
+                    }
+                }
+            }
+            .spacing(8)
+        ]
+        .spacing(16),
+    )
+    .style(|t| container::Style {
+        border: Border::default().rounded(16),
+        background: Some(iced::Background::Color(t.palette().background)),
+        ..container::Style::default()
+    })
+}
+
+fn strip_url(url: &str) -> String {
+    let prefixes = ["https://", "http://"];
+    for p in &prefixes {
+        match url.strip_prefix(p) {
+            Some(it) => {
+                return it.to_string();
+            }
+            None => {}
+        }
+    }
+    url.to_string()
 }
 
 fn format_url_from_state(state: &State) -> String {
@@ -879,6 +917,30 @@ fn format_url_from_state(state: &State) -> String {
             )
         }
         None => state.draft.clone(),
+    }
+}
+
+fn headers_from_state(state: &State) -> HeaderMap {
+    let empty: Vec<EndpointKvPair> = [].to_vec().clone();
+    match current_endpoint(state) {
+        Some(endpoint) => HeaderMap::from_iter(
+            (match &state.draft_request {
+                Some(drafts) => &drafts.headers,
+                None => match endpoint.responses.get(state.selected_response_index) {
+                    Some(resp) => &resp.request.headers,
+                    None => &empty,
+                },
+            })
+            .iter()
+            .filter(|it| !it.key.is_empty() && it.on)
+            .map(|it| {
+                (
+                    HeaderName::from_str(&it.key).unwrap(),
+                    HeaderValue::from_str(&it.value).unwrap(),
+                )
+            }),
+        ),
+        None => HeaderMap::new(),
     }
 }
 
@@ -1007,8 +1069,9 @@ impl From<reqwest::Error> for MyErr {
     }
 }
 
-async fn send_get_request(url: String) -> Result<(String, StatusCode), MyErr> {
-    let resp = reqwest::get(url).await?;
+async fn send_get_request(url: String, headers: HeaderMap) -> Result<(String, StatusCode), MyErr> {
+    let client = reqwest::Client::new();
+    let resp = client.get(url).headers(headers).send().await?;
     let status = resp.status();
     let text = resp.text().await?;
     Ok((text, status))

@@ -23,15 +23,30 @@ pub enum Message {
     DiscardDraftResponse,
     GotError(MyErr),
     Duplicate(String),
+    SetDraftQuery(bool),
+    SetSearch(String),
+    FormatResponse,
+    Start,
+    QueryParam(MQueryParam),
+    Header(MHeader),
+}
+
+#[derive(Debug, Clone)]
+pub enum MQueryParam {
     AddQueryParam(),
     SetQueryParamKey(u64, String),
     SetQueryParamContent(u64, String),
     DeleteQueryParam(u64),
     ToggleQueryParamIsOn(u64),
-    SetDraftQuery(bool),
-    SetSearch(String),
-    FormatResponse,
-    Start,
+}
+
+#[derive(Debug, Clone)]
+pub enum MHeader {
+    AddHeader(),
+    SetHeaderKey(u64, String),
+    SetHeaderContent(u64, String),
+    DeleteHeader(u64),
+    ToggleHeaderIsOn(u64),
 }
 
 #[derive(Debug, Clone)]

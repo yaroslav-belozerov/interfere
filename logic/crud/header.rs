@@ -8,7 +8,7 @@ pub fn create_header(
     on: bool,
 ) -> RusqliteResult<u64> {
     conn.execute(
-        "INSERT INTO header (parent_response_id, key, value, on) VALUES (?, ?, ?, ?)",
+        "INSERT INTO header (parent_response_id, key, value, is_on) VALUES (?, ?, ?, ?)",
         rusqlite::params![parent_response_id, key, value, on],
     )?;
     Ok(conn.last_insert_rowid() as u64)
@@ -22,7 +22,7 @@ pub fn create_header_with_tx(
     on: bool,
 ) -> RusqliteResult<u64> {
     tx.execute(
-        "INSERT INTO header (parent_response_id, key, value, on) VALUES (?, ?, ?, ?)",
+        "INSERT INTO header (parent_response_id, key, value, is_on) VALUES (?, ?, ?, ?)",
         rusqlite::params![parent_response_id, key, value, on],
     )?;
     Ok(tx.last_insert_rowid() as u64)
@@ -44,14 +44,6 @@ pub fn delete_headers_by_response(
     Ok(())
 }
 
-pub fn update_header_on(conn: &Connection, id: u64, on: bool) -> RusqliteResult<()> {
-    conn.execute(
-        "UPDATE header SET on = ? WHERE id = ?",
-        rusqlite::params![on, id],
-    )?;
-    Ok(())
-}
-
 pub fn update_header(
     conn: &Connection,
     id: u64,
@@ -60,8 +52,32 @@ pub fn update_header(
     on: bool,
 ) -> RusqliteResult<()> {
     conn.execute(
-        "UPDATE header SET key = ?, value = ?, on = ? WHERE id = ?",
+        "UPDATE header SET key = ?, value = ?, is_on = ? WHERE id = ?",
         rusqlite::params![key, value, on, id],
+    )?;
+    Ok(())
+}
+
+pub fn update_header_on(conn: &Connection, id: u64) -> RusqliteResult<()> {
+    conn.execute(
+        "UPDATE header SET is_on = NOT is_on WHERE id = ?",
+        rusqlite::params![id],
+    )?;
+    Ok(())
+}
+
+pub fn update_header_key(conn: &Connection, id: u64, key: &str) -> RusqliteResult<()> {
+    conn.execute(
+        "UPDATE header SET key = ? WHERE id = ?",
+        rusqlite::params![key, id],
+    )?;
+    Ok(())
+}
+
+pub fn update_header_value(conn: &Connection, id: u64, value: &str) -> RusqliteResult<()> {
+    conn.execute(
+        "UPDATE header SET value = ? WHERE id = ?",
+        rusqlite::params![value, id],
     )?;
     Ok(())
 }
