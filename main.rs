@@ -31,7 +31,6 @@ use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 use reqwest::StatusCode;
 use serde_json::Value;
 use std::cmp::max;
-use std::collections::HashMap;
 use std::str::FromStr;
 
 impl State {
@@ -47,6 +46,8 @@ impl State {
                 selected_endpoint: None,
                 selected_response_index: 0,
                 formatted_response: None,
+                error_message: None,
+                ctrl_pressed: false,
                 theme: AppTheme {
                     palette: Palette {
                         background: Color::parse("#1A1B26").unwrap(),
@@ -88,6 +89,10 @@ fn create_new_endpoint(state: &mut State, parent_id: u64, text: &str, code: Stat
 
 fn update(state: &mut State, message: Message) -> Task<Message> {
     match message {
+        Message::SetCtrlPressed(pressed) => {
+            state.ctrl_pressed = pressed;
+            Task::none()
+        }
         Message::SetDraftQuery(copy) => {
             if copy {
                 match current_response(state) {
@@ -129,6 +134,9 @@ fn update(state: &mut State, message: Message) -> Task<Message> {
             Task::none()
         }
         Message::Send => {
+            if state.ctrl_pressed {
+                return update(state, Message::SendDraft);
+            }
             state.can_send = false;
             let url = format_url_from_state(state);
             let headers = headers_from_state(state);
@@ -147,6 +155,7 @@ fn update(state: &mut State, message: Message) -> Task<Message> {
             })
         }
         Message::Back => {
+            state.error_message = None;
             if state.draft_response.is_none() {
                 state.selected_endpoint = None;
                 focus("main_urlbar")
@@ -219,6 +228,11 @@ fn update(state: &mut State, message: Message) -> Task<Message> {
         }
         Message::GotError(_err) => {
             state.can_send = true;
+            state.error_message = Some("Could not send request".to_string());
+            Task::none()
+        }
+        Message::ClearErrorMessage => {
+            state.error_message = None;
             Task::none()
         }
         Message::QueryParam(message) => message_query_param(state, message),
@@ -228,6 +242,7 @@ fn update(state: &mut State, message: Message) -> Task<Message> {
             state.draft_request = None;
             state.draft_response = None;
             state.selected_endpoint = Some(id);
+            state.error_message = None;
             let count =
                 response_count_by_endpoint_id(&get_db().lock().unwrap(), id).unwrap() as usize;
             state.selected_response_index = max(count, 1) - 1;
@@ -301,6 +316,7 @@ fn update(state: &mut State, message: Message) -> Task<Message> {
             Task::none()
         }
         Message::Focus(it) => focus(it),
+
         Message::DecrementSelectedResponseIndex => match state.draft_response {
             Some(_) => {
                 state.draft_response = None;
@@ -475,20 +491,40 @@ pub fn main() -> iced::Result {
 fn endpoint_list(state: &State) -> Element<Message> {
     mr(
         column![
-            row![
-                text("Interfere")
-                    .size(32)
-                    .font(Font {
-                        weight: Weight::Bold,
-                        ..GEIST_FONT
-                    })
-                    .color(state.theme.palette.primary),
-                bi(Icons::Plus, Some(Message::Back), ButtonType::Outlined)
-                    .width(32)
-                    .height(32)
-            ]
-            .align_y(Center)
-            .spacing(8),
+            column![
+                mb(
+                    row![
+                        text("Interfere")
+                            .size(32)
+                            .font(Font {
+                                weight: Weight::Bold,
+                                ..GEIST_FONT
+                            })
+                            .color(state.theme.palette.primary),
+                        bi(Icons::Plus, Some(Message::Back), ButtonType::Outlined)
+                            .width(32)
+                            .height(32),
+                    ]
+                    .align_y(Center)
+                    .spacing(8)
+                    .into(),
+                    match &state.error_message {
+                        Some(_) => 8.0,
+                        None => 0.0,
+                    }
+                ),
+                match &state.error_message {
+                    Some(m) => {
+                        bti(
+                            m.clone(),
+                            Icons::Close,
+                            Some(Message::ClearErrorMessage),
+                            ButtonType::Danger,
+                        )
+                    }
+                    None => empty_b(),
+                }
+            ],
             mytext_input("Search...", &state.endp_search, &Message::SetSearch, None)
                 .width(312)
                 .id("searchbar"),
@@ -530,7 +566,8 @@ fn send_button(state: &State) -> Button<Message> {
             "Rerun"
         } else {
             "Send"
-        },
+        }
+        .to_string(),
         Icons::Enter,
         if state.can_send {
             Some(Message::Send)
@@ -588,91 +625,75 @@ fn content(state: &State) -> Column<Message> {
                         header_panel(state, endpoint)
                     ]
                     .spacing(16),
-                    match &state.draft_response {
-                        Some(draft) => {
-                            ml(
-                                card(column![
-                                    mb(text("Draft response").into(), 8.0),
-                                    row![
-                                        bi(
-                                            Icons::Left,
-                                            Some(Message::DiscardDraftResponse),
-                                            ButtonType::Text
-                                        ),
-                                        row![
-                                            container(text!("{}", draft.0).style(|_| {
-                                                text::Style {
-                                                    color: Some(Color::BLACK),
-                                                }
-                                            }))
-                                            .padding([2, 4])
-                                            .style(
-                                                |_| {
-                                                    container::Style {
-                                                        background: Some(iced::Background::Color(
-                                                            color_for_status(draft.0),
-                                                        )),
-                                                        ..container::Style::default()
-                                                    }
-                                                }
-                                            ),
-                                            column![
-                                                text(draft.2.format("%H:%M:%S").to_string())
-                                                    .size(14)
-                                                    .line_height(1.0),
-                                                text(draft.2.format("%d-%m-%Y").to_string())
-                                                    .size(10)
-                                                    .line_height(0.9)
-                                            ]
-                                        ]
-                                        .align_y(Center)
-                                        .spacing(8)
-                                        .width(Fill),
-                                        bi(
-                                            Icons::Check,
-                                            Some(Message::FormatResponse),
-                                            ButtonType::Text
-                                        )
-                                    ]
-                                    .align_y(Center)
-                                    .spacing(8),
-                                    mb(
-                                        scrollable(match &state.formatted_response {
-                                            Some(fmt) => text(fmt),
-                                            None => text(&draft.1),
-                                        })
-                                        .direction(iced::widget::scrollable::Direction::Both {
-                                            vertical: Scrollbar::default(),
-                                            horizontal: Scrollbar::default()
-                                        })
-                                        .height(Fill)
-                                        .width(Fill)
-                                        .into(),
-                                        16.0
-                                    )
-                                    .padding([16, 0])
-                                ])
-                                .width(Fill)
-                                .into(),
-                                16.0,
-                            )
-                            .into()
-                        }
-                        None => {
-                            match current_response(state) {
-                                Some(resp) => response_panels(
-                                    resp,
-                                    state,
-                                    current_endpoint(state).unwrap().responses.len(),
-                                ),
-                                None => column!().into(),
-                            }
-                        }
-                    }
+                    draft_response_panel(state)
                 ]
             ]
         }
-        None => column![draft_urlbar(state)],
+        None => column![draft_urlbar(state), draft_response_panel(state)],
+    }
+}
+
+fn draft_response_panel(state: &State) -> container::Container<'_, Message> {
+    match &state.draft_response {
+        Some(draft) => card(column![
+            mb(text("Temporary response").into(), 8.0),
+            row![
+                bi(
+                    Icons::Left,
+                    Some(Message::DiscardDraftResponse),
+                    ButtonType::Text
+                ),
+                row![
+                    container(text!("{}", draft.0).style(|_| {
+                        text::Style {
+                            color: Some(Color::BLACK),
+                        }
+                    }))
+                    .padding([2, 4])
+                    .style(|_| {
+                        container::Style {
+                            background: Some(iced::Background::Color(color_for_status(draft.0))),
+                            ..container::Style::default()
+                        }
+                    }),
+                    column![
+                        text(draft.2.format("%H:%M:%S").to_string())
+                            .size(14)
+                            .line_height(1.0),
+                        text(draft.2.format("%d-%m-%Y").to_string())
+                            .size(10)
+                            .line_height(0.9)
+                    ]
+                ]
+                .align_y(Center)
+                .spacing(8)
+                .width(Fill),
+                bi(
+                    Icons::Check,
+                    Some(Message::FormatResponse),
+                    ButtonType::Text
+                )
+            ]
+            .align_y(Center)
+            .spacing(8),
+            mb(
+                scrollable(match &state.formatted_response {
+                    Some(fmt) => text(fmt),
+                    None => text(&draft.1),
+                })
+                .direction(iced::widget::scrollable::Direction::Both {
+                    vertical: Scrollbar::default(),
+                    horizontal: Scrollbar::default()
+                })
+                .height(Fill)
+                .width(Fill)
+                .into(),
+                16.0
+            )
+            .padding([16, 0])
+        ])
+        .width(Fill),
+        None => container(column![]),
     }
 }
 
@@ -1078,53 +1099,67 @@ async fn send_get_request(url: String, headers: HeaderMap) -> Result<(String, St
 }
 
 fn subscription(_state: &State) -> Subscription<Message> {
-    keyboard::on_key_press(|key, mods| match key {
-        keyboard::key::Key::Named(keyboard::key::Named::Enter) => {
-            if mods.contains(Modifiers::CTRL) {
-                Some(Message::SendDraft)
-            } else {
-                Some(Message::Send)
+    Subscription::batch([
+        keyboard::on_key_press(|key, mods| match key {
+            keyboard::key::Key::Named(keyboard::key::Named::Enter) => {
+                if mods.contains(Modifiers::CTRL) {
+                    Some(Message::SendDraft)
+                } else {
+                    Some(Message::Send)
+                }
             }
-        }
-        keyboard::key::Key::Named(keyboard::key::Named::Escape) => Some(Message::Back),
-        keyboard::key::Key::Named(keyboard::key::Named::ArrowLeft) => {
-            if mods.contains(Modifiers::CTRL) {
-                Some(Message::IncrementSelectedResponseIndex)
-            } else {
-                None
+            keyboard::key::Key::Named(keyboard::key::Named::Escape) => Some(Message::Back),
+            keyboard::key::Key::Named(keyboard::key::Named::ArrowLeft) => {
+                if mods.contains(Modifiers::CTRL) {
+                    Some(Message::IncrementSelectedResponseIndex)
+                } else {
+                    None
+                }
             }
-        }
-        keyboard::key::Key::Named(keyboard::key::Named::ArrowRight) => {
-            if mods.contains(Modifiers::CTRL) {
-                Some(Message::DecrementSelectedResponseIndex)
-            } else {
-                None
+            keyboard::key::Key::Named(keyboard::key::Named::ArrowRight) => {
+                if mods.contains(Modifiers::CTRL) {
+                    Some(Message::DecrementSelectedResponseIndex)
+                } else {
+                    None
+                }
             }
-        }
-        keyboard::key::Key::Named(keyboard::key::Named::ArrowDown) => {
-            if mods.contains(Modifiers::CTRL) {
-                Some(Message::IncrementSelectedEndpoint)
-            } else {
-                None
+            keyboard::key::Key::Named(keyboard::key::Named::ArrowDown) => {
+                if mods.contains(Modifiers::CTRL) {
+                    Some(Message::IncrementSelectedEndpoint)
+                } else {
+                    None
+                }
             }
-        }
-        keyboard::key::Key::Named(keyboard::key::Named::ArrowUp) => {
-            if mods.contains(Modifiers::CTRL) {
-                Some(Message::DecrementSelectedEndpoint)
-            } else {
-                None
+            keyboard::key::Key::Named(keyboard::key::Named::ArrowUp) => {
+                if mods.contains(Modifiers::CTRL) {
+                    Some(Message::DecrementSelectedEndpoint)
+                } else {
+                    None
+                }
             }
-        }
-        keyboard::key::Key::Character(key) => {
-            if mods.contains(Modifiers::CTRL) && key == "f" {
-                Some(Message::Focus("searchbar"))
-            } else {
-                None
+            keyboard::key::Key::Character(key) => {
+                if mods.contains(Modifiers::CTRL) && key == "f" {
+                    Some(Message::Focus("searchbar"))
+                } else {
+                    None
+                }
             }
-        }
 
-        _ => None,
-    })
+            _ => {
+                if mods.contains(Modifiers::CTRL) {
+                    Some(Message::SetCtrlPressed(true))
+                } else {
+                    None
+                }
+            }
+        }),
+        keyboard::on_key_release(|key, _mods| match key {
+            keyboard::key::Key::Named(keyboard::key::Named::Control) => {
+                Some(Message::SetCtrlPressed(false))
+            }
+            _ => None,
+        }),
+    ])
 }
 
 fn theme(state: &State) -> Theme {

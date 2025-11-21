@@ -26,6 +26,7 @@ pub enum Icons {
     Left,
     Right,
     Check,
+    Close,
 }
 
 pub enum ButtonType {
@@ -49,6 +50,7 @@ pub fn match_icon(ic: Icons) -> Vec<u8> {
         Icons::Left => include_bytes!("../res/icons/arrow-left.svg").to_vec(),
         Icons::Right => include_bytes!("../res/icons/arrow-right.svg").to_vec(),
         Icons::Check => include_bytes!("../res/icons/check.svg").to_vec(),
+        Icons::Close => include_bytes!("../res/icons/close.svg").to_vec(),
     }
 }
 
@@ -84,10 +86,37 @@ fn primary_b<'a>(
             .style(primary_button_style),
     }
 }
-fn danger_b<'a>(string: impl IntoFragment<'a>, on_click: Option<Message>) -> Button<'a, Message> {
-    button(text(string).align_x(Center))
-        .on_press_maybe(on_click)
-        .style(danger_button_style)
+fn danger_b<'a>(
+    string: impl IntoFragment<'a>,
+    on_click: Option<Message>,
+    icon_path: Option<Icons>,
+) -> Button<'a, Message> {
+    match icon_path {
+        Some(p) => {
+            let handle = svg::Handle::from_memory(match_icon(p));
+            button(
+                row![
+                    svg(handle)
+                        .style(|_, _| {
+                            svg::Style {
+                                color: Some(Color::BLACK),
+                            }
+                        })
+                        .width(20)
+                        .height(20),
+                    text(string)
+                ]
+                .align_y(Center)
+                .spacing(8)
+                .width(Shrink),
+            )
+            .on_press_maybe(on_click)
+            .style(danger_button_style)
+        }
+        None => button(text(string))
+            .on_press_maybe(on_click)
+            .style(danger_button_style),
+    }
 }
 
 fn text_b<'a>(content: impl IntoFragment<'a>, on_click: Option<Message>) -> Button<'a, Message> {
@@ -130,7 +159,7 @@ pub fn bt<'a>(
     match button_type {
         ButtonType::Primary => primary_b(content, on_click, None),
         ButtonType::Text => text_b(content, on_click),
-        ButtonType::Danger => danger_b(content, on_click),
+        ButtonType::Danger => danger_b(content, on_click, None),
         ButtonType::Outlined => outlined_b(content, on_click),
     }
 }
@@ -149,7 +178,7 @@ pub fn bi<'a>(
 }
 
 pub fn bti<'a>(
-    content: &'a str,
+    content: String,
     icon: Icons,
     on_click: Option<Message>,
     button_type: ButtonType,
@@ -157,7 +186,7 @@ pub fn bti<'a>(
     match button_type {
         ButtonType::Primary => primary_b(content, on_click, Some(icon)),
         ButtonType::Text => todo!(),
-        ButtonType::Danger => todo!(),
+        ButtonType::Danger => danger_b(content, on_click, Some(icon)),
         ButtonType::Outlined => todo!(),
     }
 }

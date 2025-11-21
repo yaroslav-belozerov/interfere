@@ -19,6 +19,8 @@ pub enum Message {
     ClickEndpoint(u64),
     ClickDeleteEndpoint(u64),
     ClickDeleteResponse(u64),
+    ClearErrorMessage,
+    SetCtrlPressed(bool),
     GotResponse(String, StatusCode, bool),
     DiscardDraftResponse,
     GotError(MyErr),
@@ -97,6 +99,8 @@ pub struct State {
     pub endp_search: String,
     pub selected_response_index: usize,
     pub formatted_response: Option<String>,
+    pub error_message: Option<String>,
+    pub ctrl_pressed: bool,
     pub theme: AppTheme,
 }
 
