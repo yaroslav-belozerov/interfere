@@ -625,7 +625,23 @@ fn content(state: &State) -> Column<Message> {
                         header_panel(state, endpoint)
                     ]
                     .spacing(16),
-                    draft_response_panel(state)
+                    match state.draft_response {
+                        Some(_) => {
+                            draft_response_panel(state)
+                        }
+                        None => {
+                            container(
+                                match &endpoint.responses.get(state.selected_response_index) {
+                                    Some(resp) => {
+                                        response_panels(resp, state, endpoint.responses.len())
+                                    }
+                                    None => {
+                                        column![]
+                                    }
+                                },
+                            )
+                        }
+                    },
                 ]
             ]
         }
@@ -969,7 +985,7 @@ fn response_panels<'a>(
     resp: &'a Response,
     state: &'a State,
     resp_count: usize,
-) -> Element<'a, Message, Theme, Renderer> {
+) -> Column<'a, Message, Theme, Renderer> {
     let time = Local::now().offset().from_utc_datetime(&resp.received_time);
     column![
         mb(
@@ -1077,7 +1093,6 @@ fn response_panels<'a>(
             16.0,
         )
     ]
-    .into()
 }
 
 impl From<reqwest::Error> for MyErr {
