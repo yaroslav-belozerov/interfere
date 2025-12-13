@@ -3,9 +3,11 @@
 Interfere is a desktop HTTP client. Minimal, fast, and keyboard-friendly.
 
 ### 👍 Features (implemented)
-- **GET requests**
-  - When sending a request, it's stored along with the response. You can run the same request many times.
-- **Keyboard**:
+- **GET, POST requests**
+  - Send request, save the response.
+  - You can override a saved response, or send request in draft mode. 
+  - Query params & headers are working.
+- **Keymap**:
   - Enter: send
   - Ctrl + Enter: send without saving
   - Escape: go back
@@ -13,9 +15,9 @@ Interfere is a desktop HTTP client. Minimal, fast, and keyboard-friendly.
   - Ctrl + <>: switch through responses
 
 ### 🗺️ Roadmap
-1. Headers in requests  
-2. HTTP methods other than GET + request body editing
-3. Import/export of data
+1. HTTP methods other than GET/POST + request body editing
+2. Import/export of data
+3. Better UI/UX
 4. Other protocols and more...
 
 ### 💻 Tech stack

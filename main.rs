@@ -545,7 +545,7 @@ fn endpoint_list(state: &State) -> Element<'_, Message> {
                 }
             ],
             mytext_input("Search...", &state.endp_search, &Message::SetSearch, None)
-                .width(312)
+                .width(348)
                 .id("searchbar"),
             Column::from_iter(state.endpoints.iter().map(|el| {
                 row![
@@ -559,17 +559,37 @@ fn endpoint_list(state: &State) -> Element<'_, Message> {
                         }
                     )
                     .width(Fill),
+                    row![
+                        container(
+                            row![text(el.method.to_string()).style(|_| {
+                                text::Style {
+                                    color: Some(Color::BLACK),
+                                    ..text::Style::default()
+                                }
+                            })]
+                            .padding([6, 8])
+                        )
+                        .style(|_| {
+                            container::Style {
+                                background: Some(iced::Background::Color(color_for_method(
+                                    el.method,
+                                ))),
+                                ..container::Style::default()
+                            }
+                        })
+                    ],
                     bi(
                         Icons::Delete,
                         Some(Message::ClickDeleteEndpoint(el.id)),
-                        ButtonType::Danger
+                        ButtonType::Inline
                     )
                     .width(48)
                 ]
                 .align_y(Alignment::Center)
-                .width(312)
+                .width(348)
                 .into()
             }))
+            .spacing(2)
         ]
         .spacing(16.0)
         .into(),
@@ -1419,6 +1439,15 @@ fn color_for_status(code: StatusCode) -> Color {
         StatusCode::OK => Color::parse("#9ECE6A"),
         StatusCode::FOUND => Color::parse("#414868"),
         _ => Color::parse("#F7768E"),
+    }
+    .unwrap()
+}
+
+fn color_for_method(method: HttpMethod) -> Color {
+    match method {
+        HttpMethod::GET => Color::parse("#9ECE6A"),
+        HttpMethod::POST => Color::parse("#e8de6d"),
+        _ => Color::parse("#414868"),
     }
     .unwrap()
 }

@@ -115,12 +115,12 @@ fn primary_inline_b<'a>(
                 .spacing(8)
                 .width(Shrink),
             )
-            .padding([12, 10])
+            .padding([6, 8])
             .on_press_maybe(on_click)
             .style(primary_inline_button_style)
         }
         None => button(text(string))
-            .padding([12, 10])
+            .padding([6, 8])
             .on_press_maybe(on_click)
             .style(primary_inline_button_style),
     }
@@ -160,7 +160,7 @@ fn danger_b<'a>(
 }
 fn inline_b<'a>(content: impl IntoFragment<'a>, on_click: Option<Message>) -> Button<'a, Message> {
     button(text(content))
-        .padding(Padding::from([12, 10]))
+        .padding(Padding::from([6, 8]))
         .on_press_maybe(on_click)
         .style(|theme, status| button::Style {
             background: Some(iced::Background::Color(match status {
@@ -229,7 +229,7 @@ pub fn bi<'a>(
         ButtonType::Danger => icon_danger_b(icon, on_click),
         ButtonType::Outlined => icon_outlined_b(icon, on_click),
         ButtonType::PrimaryInline => icon_primary_b(icon, on_click),
-        ButtonType::Inline => icon_text_b(icon, on_click),
+        ButtonType::Inline => icon_inline_b(icon, on_click),
     }
 }
 
@@ -268,6 +268,27 @@ fn icon_danger_b<'a>(icon: Icons, on_click: Option<Message>) -> Button<'a, Messa
         ..button::danger(t, s)
     })
     .padding(6)
+}
+
+fn icon_inline_b<'a>(icon: Icons, on_click: Option<Message>) -> Button<'a, Message> {
+    button(
+        svg(svg::Handle::from_memory(match_icon(icon)))
+            .style(|t, _| svg::Style {
+                color: Some(button::text(t, Status::Active).text_color),
+            })
+            .width(20)
+            .height(20),
+    )
+    .on_press_maybe(on_click)
+    .style(|t, s| button::Style {
+        background: match s {
+            button::Status::Hovered => Some(Background::Color(Color::parse("#32333D").unwrap())),
+            _ => None,
+        },
+        text_color: button::text(t, Status::Active).text_color,
+        ..button::text(t, s)
+    })
+    .padding(7)
 }
 
 fn icon_text_b<'a>(icon: Icons, on_click: Option<Message>) -> Button<'a, Message> {
