@@ -1,7 +1,7 @@
+use crate::EndpointDb as Endpoint;
 use crate::logic::crud::header::create_header_with_tx;
 use crate::logic::crud::query::create_query_param_with_tx;
 use crate::logic::crud::response::create_response_with_tx;
-use crate::EndpointDb as Endpoint;
 use rusqlite::{Connection, Result as RusqliteResult};
 
 // ============================================================================
@@ -29,7 +29,10 @@ pub fn create_endpoint_full(conn: &Connection, endpoint: &Endpoint) -> RusqliteR
     let tx = conn.unchecked_transaction()?;
 
     // Insert endpoint
-    tx.execute("INSERT INTO endpoint (url) VALUES (?)", [&endpoint.url])?;
+    tx.execute(
+        "INSERT INTO endpoint (url, method) VALUES (?, ?)",
+        [&endpoint.url, &endpoint.method.to_string()],
+    )?;
     let endpoint_id = tx.last_insert_rowid() as u64;
 
     // Insert responses

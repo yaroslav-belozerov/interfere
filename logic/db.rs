@@ -1,9 +1,12 @@
-use std::sync::{Mutex, OnceLock};
+use std::{
+    error::Error,
+    sync::{Mutex, OnceLock},
+};
 
 use reqwest::StatusCode;
 use rusqlite::{Connection, Result};
 
-use crate::{EndpointDb, EndpointKvPair, Request, Response};
+use crate::{EndpointDb, EndpointKvPair, Request, Response, logic::common::HttpMethod};
 
 static DB: OnceLock<Mutex<Connection>> = OnceLock::new();
 
@@ -22,7 +25,8 @@ pub fn init() -> Result<()> {
     tx.execute(
         "create table if not exists endpoint (
              id integer primary key,
-             url varchar(512)
+             url varchar(512) NOT NULL,
+             method varchar(512) NOT NULL
          )",
         (),
     )?;
@@ -67,23 +71,27 @@ pub fn load_endpoints(
     conn: &rusqlite::Connection,
     query: Option<&str>,
 ) -> Result<Vec<EndpointDb>, rusqlite::Error> {
-    // First, get all endpoints
     let mut stmt =
-        conn.prepare("SELECT id, url FROM endpoint WHERE url LIKE (?) ORDER BY id DESC")?;
+        conn.prepare("SELECT id, url, method FROM endpoint WHERE url LIKE (?) ORDER BY id DESC")?;
     let endpoint_rows = stmt.query_map(
         [match query {
             Some(it) => format!("%{}%", it),
             None => "%".to_string(),
         }],
-        |row| Ok((row.get::<_, u64>(0)?, row.get::<_, String>(1)?)),
+        |row| {
+            Ok((
+                row.get::<_, u64>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+            ))
+        },
     )?;
 
     let mut endpoints = Vec::new();
 
     for endpoint_result in endpoint_rows {
-        let (id, url) = endpoint_result?;
+        let (id, url, method) = endpoint_result?;
 
-        // Load responses for this endpoint
         let mut resp_stmt = conn.prepare(
             "SELECT id, parent_endpoint_id, text, code, received_time 
              FROM response 
@@ -93,7 +101,6 @@ pub fn load_endpoints(
             .query_map([id], |row| {
                 let resp_id = row.get(0)?;
 
-                // Load query params for this response
                 let mut qp_stmt = conn.prepare(
                     "SELECT id, parent_response_id, key, value, is_on 
              FROM query_param 
@@ -111,7 +118,6 @@ pub fn load_endpoints(
                     })?
                     .collect::<Result<_, _>>()?;
 
-                // Load headers for this response
                 let mut hdr_stmt = conn.prepare(
                     "SELECT id, parent_response_id, key, value, is_on 
              FROM header 
@@ -143,7 +149,17 @@ pub fn load_endpoints(
             })?
             .collect::<Result<_, _>>()?;
 
-        endpoints.push(EndpointDb { id, url, responses });
+        let method_enum = method
+            .as_str()
+            .parse()
+            .map_err(|_| rusqlite::types::FromSqlError::Other("Invalid HTTP Method".into()))?;
+
+        endpoints.push(EndpointDb {
+            id,
+            url,
+            responses,
+            method: method_enum,
+        });
     }
 
     Ok(endpoints)

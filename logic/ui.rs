@@ -1,14 +1,14 @@
 use crate::logic::common::Message;
+use iced::Alignment::Center;
+use iced::Length::Shrink;
 use iced::border::Radius;
 use iced::theme::Palette;
 use iced::widget::button::Status;
-use iced::widget::text::{Fragment, IntoFragment};
+use iced::widget::text::IntoFragment;
 use iced::widget::{
-    button, container, row, svg, text, text_input, Button, Column, Container, Row, TextInput,
+    Button, Column, Container, Row, TextInput, button, container, row, svg, text, text_input,
 };
-use iced::Alignment::Center;
-use iced::Length::Shrink;
-use iced::{border, Background, Border, Color, Element, Font, Padding, Renderer, Shadow, Theme};
+use iced::{Background, Border, Color, Element, Font, Padding, Renderer, Shadow, Theme, border};
 
 pub const GEIST_FONT: Font = Font {
     family: iced::font::Family::Name("Geist"),
@@ -27,6 +27,7 @@ pub enum Icons {
     Right,
     Check,
     Close,
+    Format,
 }
 
 pub enum ButtonType {
@@ -34,6 +35,8 @@ pub enum ButtonType {
     Text,
     Danger,
     Outlined,
+    PrimaryInline,
+    Inline,
 }
 
 pub struct AppTheme {
@@ -51,6 +54,7 @@ pub fn match_icon(ic: Icons) -> Vec<u8> {
         Icons::Right => include_bytes!("../res/icons/arrow-right.svg").to_vec(),
         Icons::Check => include_bytes!("../res/icons/check.svg").to_vec(),
         Icons::Close => include_bytes!("../res/icons/close.svg").to_vec(),
+        Icons::Format => include_bytes!("../res/icons/format.svg").to_vec(),
     }
 }
 
@@ -86,6 +90,42 @@ fn primary_b<'a>(
             .style(primary_button_style),
     }
 }
+
+fn primary_inline_b<'a>(
+    string: impl IntoFragment<'a>,
+    on_click: Option<Message>,
+    icon_path: Option<Icons>,
+) -> Button<'a, Message> {
+    match icon_path {
+        Some(p) => {
+            let handle = svg::Handle::from_memory(match_icon(p));
+            button(
+                row![
+                    svg(handle)
+                        .style(|_, _| {
+                            svg::Style {
+                                color: Some(Color::BLACK),
+                            }
+                        })
+                        .width(20)
+                        .height(20),
+                    text(string)
+                ]
+                .align_y(Center)
+                .spacing(8)
+                .width(Shrink),
+            )
+            .padding([12, 10])
+            .on_press_maybe(on_click)
+            .style(primary_inline_button_style)
+        }
+        None => button(text(string))
+            .padding([12, 10])
+            .on_press_maybe(on_click)
+            .style(primary_inline_button_style),
+    }
+}
+
 fn danger_b<'a>(
     string: impl IntoFragment<'a>,
     on_click: Option<Message>,
@@ -117,6 +157,18 @@ fn danger_b<'a>(
             .on_press_maybe(on_click)
             .style(danger_button_style),
     }
+}
+fn inline_b<'a>(content: impl IntoFragment<'a>, on_click: Option<Message>) -> Button<'a, Message> {
+    button(text(content))
+        .padding(Padding::from([12, 10]))
+        .on_press_maybe(on_click)
+        .style(|theme, status| button::Style {
+            background: Some(iced::Background::Color(match status {
+                button::Status::Hovered => Color::parse("#242530").unwrap(),
+                _ => Color::TRANSPARENT,
+            })),
+            ..button::text(theme, status)
+        })
 }
 
 fn text_b<'a>(content: impl IntoFragment<'a>, on_click: Option<Message>) -> Button<'a, Message> {
@@ -161,6 +213,8 @@ pub fn bt<'a>(
         ButtonType::Text => text_b(content, on_click),
         ButtonType::Danger => danger_b(content, on_click, None),
         ButtonType::Outlined => outlined_b(content, on_click),
+        ButtonType::PrimaryInline => primary_inline_b(content, on_click, None),
+        ButtonType::Inline => inline_b(content, on_click),
     }
 }
 
@@ -174,6 +228,8 @@ pub fn bi<'a>(
         ButtonType::Text => icon_text_b(icon, on_click),
         ButtonType::Danger => icon_danger_b(icon, on_click),
         ButtonType::Outlined => icon_outlined_b(icon, on_click),
+        ButtonType::PrimaryInline => icon_primary_b(icon, on_click),
+        ButtonType::Inline => icon_text_b(icon, on_click),
     }
 }
 
@@ -188,6 +244,8 @@ pub fn bti<'a>(
         ButtonType::Text => todo!(),
         ButtonType::Danger => danger_b(content, on_click, Some(icon)),
         ButtonType::Outlined => todo!(),
+        ButtonType::PrimaryInline => icon_primary_b(icon, on_click),
+        ButtonType::Inline => text_b(content, on_click),
     }
 }
 
@@ -324,6 +382,12 @@ fn custom_text_input_style(theme: &Theme, status: text_input::Status) -> text_in
 fn primary_button_style(theme: &Theme, status: button::Status) -> button::Style {
     button::Style {
         border: border::rounded(8),
+        ..button::primary(theme, status)
+    }
+}
+
+fn primary_inline_button_style(theme: &Theme, status: button::Status) -> button::Style {
+    button::Style {
         ..button::primary(theme, status)
     }
 }

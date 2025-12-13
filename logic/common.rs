@@ -1,7 +1,12 @@
 use crate::AppTheme;
 use chrono::NaiveDateTime;
+use core::fmt;
 use reqwest::StatusCode;
-use std::fmt::Display;
+use rusqlite::{
+    ToSql,
+    types::{FromSql, FromSqlResult, ToSqlOutput, ValueRef},
+};
+use std::{fmt::Display, str::FromStr};
 
 #[derive(Debug, Clone)]
 pub enum Message {
@@ -29,6 +34,7 @@ pub enum Message {
     SetSearch(String),
     FormatResponse,
     Start,
+    ClickMethod,
     QueryParam(MQueryParam),
     Header(MHeader),
 }
@@ -57,11 +63,36 @@ pub enum MyErr {
     Client(String),
 }
 
+#[derive(Debug, Clone, Copy)]
+pub enum HttpMethod {
+    GET,
+    POST,
+}
+
+impl fmt::Display for HttpMethod {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{:?}", self)
+    }
+}
+
+impl FromStr for HttpMethod {
+    type Err = ();
+
+    fn from_str(input: &str) -> Result<HttpMethod, Self::Err> {
+        match input {
+            "GET" => Ok(HttpMethod::GET),
+            "POST" => Ok(HttpMethod::POST),
+            _ => Err(()),
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct EndpointDb {
     pub id: u64,
     pub url: String,
     pub responses: Vec<Response>,
+    pub method: HttpMethod,
 }
 
 #[derive(Default, Debug, Clone)]
@@ -94,8 +125,10 @@ pub struct State {
     pub endpoints: Vec<EndpointDb>,
     pub selected_endpoint: Option<u64>,
     pub draft: String,
-    pub draft_request: Option<Request>,
+    pub copy_request: Option<Request>,
+    pub draft_request: Request,
     pub draft_response: Option<(StatusCode, String, NaiveDateTime)>,
+    pub draft_method: HttpMethod,
     pub endp_search: String,
     pub selected_response_index: usize,
     pub formatted_response: Option<String>,

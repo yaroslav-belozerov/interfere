@@ -2,7 +2,6 @@ use chrono::NaiveDateTime;
 use reqwest::StatusCode;
 use rusqlite::{Connection, Result as RusqliteResult};
 
-use crate::Response;
 pub fn create_response(
     conn: &Connection,
     parent_endpoint_id: u64,

@@ -1,34 +1,32 @@
 mod logic;
 
 use crate::AppTheme;
+use crate::logic::crud::endpoint;
 use chrono::{Local, NaiveDateTime, TimeZone};
+use iced::Alignment::{self, Center};
+use iced::Length::{Fill, Shrink};
 use iced::font::Weight;
 use iced::keyboard::Modifiers;
 use iced::theme::Palette;
 use iced::widget::scrollable::Scrollbar;
 use iced::widget::text_input::focus;
 use iced::widget::{
-    column, container, horizontal_space, row, scrollable, svg, text, Button, Column, Row,
+    Button, Column, Container, Row, column, container, horizontal_space, row, scrollable, svg, text,
 };
-use iced::Alignment::Center;
-use iced::Length::{Fill, Shrink};
-use iced::{keyboard, Border, Color, Element, Font, Renderer, Subscription, Task, Theme};
+use iced::{Border, Color, Element, Font, Renderer, Subscription, Task, Theme, keyboard};
+use logic::common::*;
 use logic::crud::endpoint::{create_endpoint_full, delete_endpoint};
 use logic::crud::header::create_header_with_tx;
-use logic::crud::query::{
-    create_query_param_with_tx, delete_query_param, update_query_param_key, update_query_param_on,
-    update_query_param_value,
-};
+use logic::crud::query::create_query_param_with_tx;
 use logic::crud::response::{
     create_response, delete_response, response_count_by_endpoint_id, update_response,
 };
 use logic::db::{get_db, init, load_endpoints};
 use logic::message_handlers::{message_header, message_query_param};
 use logic::ui::*;
-use logic::{common::*, message_handlers};
-use markup_fmt::{format_text, Language};
-use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
+use markup_fmt::{Language, format_text};
 use reqwest::StatusCode;
+use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 use serde_json::Value;
 use std::cmp::max;
 use std::str::FromStr;
@@ -38,8 +36,13 @@ impl State {
         (
             Self {
                 draft: Default::default(),
-                draft_request: None,
+                copy_request: None,
+                draft_request: Request {
+                    query_params: vec![],
+                    headers: vec![],
+                },
                 draft_response: None,
+                draft_method: HttpMethod::GET,
                 endpoints: load_endpoints(&get_db().lock().unwrap(), None).unwrap(),
                 endp_search: "".to_string(),
                 can_send: true,
@@ -65,7 +68,7 @@ impl State {
 
 fn create_new_endpoint(state: &mut State, parent_id: u64, text: &str, code: StatusCode) {
     let resp_id = create_response(&get_db().lock().unwrap(), parent_id, &text, code).unwrap();
-    match &state.draft_request {
+    match &state.copy_request {
         Some(d) => {
             let mut db = get_db().lock().unwrap();
             let tx = db.transaction().unwrap();
@@ -77,7 +80,7 @@ fn create_new_endpoint(state: &mut State, parent_id: u64, text: &str, code: Stat
             }
             tx.commit().unwrap();
             state.draft_response = None;
-            state.draft_request = None;
+            state.copy_request = None;
         }
         None => {}
     }
@@ -97,12 +100,12 @@ fn update(state: &mut State, message: Message) -> Task<Message> {
             if copy {
                 match current_response(state) {
                     Some(resp) => {
-                        state.draft_request = Some(resp.request.clone());
+                        state.copy_request = Some(resp.request.clone());
                     }
                     None => {}
                 }
             } else {
-                state.draft_request = Some(Request {
+                state.copy_request = Some(Request {
                     query_params: Vec::new(),
                     headers: Vec::new(),
                 });
@@ -126,7 +129,7 @@ fn update(state: &mut State, message: Message) -> Task<Message> {
             state.formatted_response = None;
             state.selected_response_index = index;
             state.draft_response = None;
-            state.draft_request = None;
+            state.copy_request = None;
             Task::none()
         }
         Message::SetDraft(string) => {
@@ -140,7 +143,8 @@ fn update(state: &mut State, message: Message) -> Task<Message> {
             state.can_send = false;
             let url = format_url_from_state(state);
             let headers = headers_from_state(state);
-            Task::perform(send_get_request(url, headers), |res| match res {
+            let method = method_from_state(state);
+            Task::perform(send_get_request(url, headers, method), |res| match res {
                 Ok((text, code)) => Message::GotResponse(text, code, false),
                 Err(err) => Message::GotError(err),
             })
@@ -149,7 +153,8 @@ fn update(state: &mut State, message: Message) -> Task<Message> {
             state.can_send = false;
             let url = format_url_from_state(state);
             let headers = headers_from_state(state);
-            Task::perform(send_get_request(url, headers), |res| match res {
+            let method = method_from_state(state);
+            Task::perform(send_get_request(url, headers, method), |res| match res {
                 Ok((text, code)) => Message::GotResponse(text, code, true),
                 Err(err) => Message::GotError(err),
             })
@@ -157,6 +162,8 @@ fn update(state: &mut State, message: Message) -> Task<Message> {
         Message::Back => {
             state.error_message = None;
             if state.draft_response.is_none() {
+                state.draft_request.headers = vec![];
+                state.draft_request.query_params = vec![];
                 state.selected_endpoint = None;
                 focus("main_urlbar")
             } else {
@@ -178,7 +185,7 @@ fn update(state: &mut State, message: Message) -> Task<Message> {
                 match state.selected_endpoint {
                     Some(id) => match current_response(state) {
                         Some(current_response) => {
-                            if state.draft_request.is_none() {
+                            if state.copy_request.is_none() {
                                 update_response(
                                     &get_db().lock().unwrap(),
                                     current_response.id,
@@ -213,6 +220,7 @@ fn update(state: &mut State, message: Message) -> Task<Message> {
                                     },
                                 }]
                                 .to_vec(),
+                                method: HttpMethod::GET,
                             },
                         )
                         .unwrap();
@@ -239,13 +247,20 @@ fn update(state: &mut State, message: Message) -> Task<Message> {
         Message::Header(message) => message_header(state, message),
         Message::ClickEndpoint(id) => {
             state.formatted_response = None;
-            state.draft_request = None;
+            state.copy_request = None;
             state.draft_response = None;
             state.selected_endpoint = Some(id);
             state.error_message = None;
             let count =
                 response_count_by_endpoint_id(&get_db().lock().unwrap(), id).unwrap() as usize;
             state.selected_response_index = max(count, 1) - 1;
+            Task::none()
+        }
+        Message::ClickMethod => {
+            state.draft_method = match state.draft_method {
+                HttpMethod::GET => HttpMethod::POST,
+                HttpMethod::POST => HttpMethod::GET,
+            };
             Task::none()
         }
         Message::ClickDeleteEndpoint(id) => {
@@ -320,7 +335,7 @@ fn update(state: &mut State, message: Message) -> Task<Message> {
         Message::DecrementSelectedResponseIndex => match state.draft_response {
             Some(_) => {
                 state.draft_response = None;
-                state.draft_request = None;
+                state.copy_request = None;
                 Task::none()
             }
             None => update(
@@ -388,7 +403,11 @@ fn update(state: &mut State, message: Message) -> Task<Message> {
                         }
                     }
                 }
-                None => match state.endpoints.get(state.endpoints.len() - 1) {
+                None => match state.endpoints.get(if state.endpoints.len() > 0 {
+                    state.endpoints.len() - 1
+                } else {
+                    state.endpoints.len()
+                }) {
                     Some(n) => n.id,
                     None => return Task::none(),
                 },
@@ -466,11 +485,11 @@ fn format_response(s: &str) -> String {
                 Err(error) => error,
             }
         }
-        _ => todo!(),
+        _ => s.to_string(),
     }
 }
 
-fn view(state: &State) -> Element<Message> {
+fn view<'a>(state: &'a State) -> Element<'a, Message> {
     column![row![endpoint_list(state), column![content(state)]]]
         .padding(16)
         .into()
@@ -488,7 +507,7 @@ pub fn main() -> iced::Result {
         .run_with(State::new)
 }
 
-fn endpoint_list(state: &State) -> Element<Message> {
+fn endpoint_list(state: &State) -> Element<'_, Message> {
     mr(
         column![
             column![
@@ -534,9 +553,9 @@ fn endpoint_list(state: &State) -> Element<Message> {
                         strip_url(&el.url),
                         Some(Message::ClickEndpoint(el.id)),
                         if state.selected_endpoint == Some(el.id) {
-                            ButtonType::Primary
+                            ButtonType::PrimaryInline
                         } else {
-                            ButtonType::Text
+                            ButtonType::Inline
                         }
                     )
                     .width(Fill),
@@ -547,11 +566,10 @@ fn endpoint_list(state: &State) -> Element<Message> {
                     )
                     .width(48)
                 ]
+                .align_y(Alignment::Center)
                 .width(312)
-                .spacing(8)
                 .into()
             }))
-            .spacing(8)
         ]
         .spacing(16.0)
         .into(),
@@ -560,9 +578,9 @@ fn endpoint_list(state: &State) -> Element<Message> {
     .into()
 }
 
-fn send_button(state: &State) -> Button<Message> {
+fn send_button(state: &State) -> Button<'_, Message> {
     bti(
-        if state.draft_request.is_none() && current_response(state).is_some() {
+        if state.copy_request.is_none() && current_response(state).is_some() {
             "Rerun"
         } else {
             "Send"
@@ -580,7 +598,7 @@ fn send_button(state: &State) -> Button<Message> {
     .padding([14, 16])
 }
 
-fn draft_urlbar(state: &State) -> Element<Message> {
+fn draft_urlbar<'a>(state: &'a State) -> Element<'a, Message> {
     let urlbar = mytext_input(
         "Input URL...",
         &state.draft,
@@ -589,13 +607,26 @@ fn draft_urlbar(state: &State) -> Element<Message> {
     )
     .id("main_urlbar");
     mb(
-        column![row![urlbar, send_button(state)].spacing(8).align_y(Center)].into(),
+        column![
+            row![urlbar, method_button(state), send_button(state)]
+                .spacing(8)
+                .align_y(Center)
+        ]
+        .into(),
         16.0,
     )
     .into()
 }
 
-fn content(state: &State) -> Column<Message> {
+fn method_button<'a>(state: &'a State) -> Button<'a, Message> {
+    bt(
+        state.draft_method.to_string(),
+        Some(Message::ClickMethod),
+        ButtonType::Outlined,
+    )
+}
+
+fn content<'a>(state: &'a State) -> Column<'a, Message> {
     match current_endpoint(state) {
         Some(endpoint) => {
             let urlbar = card_clickable(
@@ -612,10 +643,12 @@ fn content(state: &State) -> Column<Message> {
             .width(Fill);
             column![
                 mb(
-                    column![row![urlbar, send_button(state)]
-                        .width(Fill)
-                        .spacing(8)
-                        .align_y(Center)]
+                    column![
+                        row![urlbar, send_button(state)]
+                            .width(Fill)
+                            .spacing(8)
+                            .align_y(Center)
+                    ]
                     .into(),
                     16.0,
                 ),
@@ -645,8 +678,52 @@ fn content(state: &State) -> Column<Message> {
                 ]
             ]
         }
-        None => column![draft_urlbar(state), draft_response_panel(state)],
+        None => column![
+            draft_urlbar(state),
+            row![
+                column![draft_query_param_panel(state), draft_header_panel(state)].spacing(16),
+                match state.draft_response {
+                    Some(_) => {
+                        draft_response_panel(state)
+                    }
+                    None => container(column![]),
+                },
+            ],
+        ],
     }
+}
+
+fn draft_query_param_panel<'a>(state: &'a State) -> Container<'a, Message> {
+    container(
+        column![
+            row![
+                text("Query params"),
+                bt(
+                    "Add",
+                    Some(Message::QueryParam(MQueryParam::AddQueryParam())),
+                    ButtonType::Primary,
+                )
+            ]
+            .spacing(16)
+            .padding([0, 8])
+            .align_y(Center)
+            .width(Fill),
+            Column::from_iter(
+                state
+                    .draft_request
+                    .query_params
+                    .iter()
+                    .map(|it| query_row(it, state, false).into()),
+            )
+            .spacing(8)
+        ]
+        .spacing(16),
+    )
+    .style(|t| container::Style {
+        border: Border::default().rounded(16),
+        background: Some(iced::Background::Color(t.palette().background)),
+        ..container::Style::default()
+    })
 }
 
 fn draft_response_panel(state: &State) -> container::Container<'_, Message> {
@@ -685,7 +762,7 @@ fn draft_response_panel(state: &State) -> container::Container<'_, Message> {
                 .spacing(8)
                 .width(Fill),
                 bi(
-                    Icons::Check,
+                    Icons::Format,
                     Some(Message::FormatResponse),
                     ButtonType::Text
                 )
@@ -719,8 +796,82 @@ fn query_row<'a>(
     is_header: bool,
 ) -> container::Container<'a, Message> {
     container(
-        match &state.draft_request {
-            Some(_) => {
+        match state.selected_endpoint {
+            Some(_) => match &state.copy_request {
+                Some(_) => {
+                    row![
+                        mytext_input(
+                            "Name",
+                            &it.key,
+                            {
+                                let it = it.clone();
+                                move |new_content| {
+                                    if is_header {
+                                        Message::Header(MHeader::SetHeaderKey(it.id, new_content))
+                                    } else {
+                                        Message::QueryParam(MQueryParam::SetQueryParamKey(
+                                            it.id,
+                                            new_content,
+                                        ))
+                                    }
+                                }
+                            },
+                            None
+                        )
+                        .id(format!("query_param_{}", it.id)),
+                        mytext_input(
+                            "Value",
+                            &it.value,
+                            {
+                                let it = it.clone();
+                                move |new_content| {
+                                    if is_header {
+                                        Message::Header(MHeader::SetHeaderContent(
+                                            it.id,
+                                            new_content,
+                                        ))
+                                    } else {
+                                        Message::QueryParam(MQueryParam::SetQueryParamContent(
+                                            it.id,
+                                            new_content,
+                                        ))
+                                    }
+                                }
+                            },
+                            None,
+                        ),
+                        bi(
+                            Icons::Check,
+                            Some(if is_header {
+                                Message::Header(MHeader::ToggleHeaderIsOn(it.id))
+                            } else {
+                                Message::QueryParam(MQueryParam::ToggleQueryParamIsOn(it.id))
+                            }),
+                            if it.on {
+                                ButtonType::Primary
+                            } else {
+                                ButtonType::Text
+                            },
+                        ),
+                        bi(
+                            Icons::Delete,
+                            Some(if is_header {
+                                Message::Header(MHeader::DeleteHeader(it.id))
+                            } else {
+                                Message::QueryParam(MQueryParam::DeleteQueryParam(it.id))
+                            }),
+                            ButtonType::Text,
+                        )
+                    ]
+                }
+                None => {
+                    row![
+                        Element::from(card(row![text(&it.key).width(Fill)])),
+                        Element::from(card(row![text(&it.value)].width(Fill))),
+                    ]
+                }
+            },
+            None => {
                 row![
                     mytext_input(
                         "Name",
@@ -783,12 +934,6 @@ fn query_row<'a>(
                     )
                 ]
             }
-            None => {
-                row![
-                    Element::from(card(row![text(&it.key).width(Fill)])),
-                    Element::from(card(row![text(&it.value)].width(Fill))),
-                ]
-            }
         }
         .align_y(Center)
         .spacing(8),
@@ -806,27 +951,33 @@ fn query_param_panel<'a>(
 ) -> container::Container<'a, Message> {
     container(
         column![
-            row![
-                text("Query params"),
-                if state.draft_request.is_none() && current_response(state).is_some() {
-                    bt(
-                        "Copy",
-                        Some(Message::SetDraftQuery(true)),
-                        ButtonType::Outlined,
-                    )
-                } else {
+            if state.copy_request.is_none() && current_response(state).is_some() {
+                row![
+                    column![
+                        bt(
+                            "Copy",
+                            Some(Message::SetDraftQuery(true)),
+                            ButtonType::Outlined,
+                        ),
+                        text("Query params"),
+                    ]
+                    .spacing(16)
+                ]
+            } else {
+                row![
+                    text("Query params"),
                     bt(
                         "Add",
                         Some(Message::QueryParam(MQueryParam::AddQueryParam())),
                         ButtonType::Primary,
                     )
-                }
-            ]
-            .spacing(16)
+                ]
+                .spacing(16)
+                .align_y(Center)
+            }
             .padding([0, 8])
-            .align_y(Center)
             .width(Fill),
-            match &state.draft_request {
+            match &state.copy_request {
                 Some(drafts) => {
                     Column::from_iter(
                         drafts
@@ -858,6 +1009,39 @@ fn query_param_panel<'a>(
     })
 }
 
+fn draft_header_panel<'a>(state: &'a State) -> Container<'a, Message> {
+    container(
+        column![
+            row![
+                text("Headers"),
+                bt(
+                    "Add",
+                    Some(Message::Header(MHeader::AddHeader())),
+                    ButtonType::Primary,
+                )
+            ]
+            .spacing(16)
+            .padding([0, 8])
+            .align_y(Center)
+            .width(Fill),
+            Column::from_iter(
+                state
+                    .draft_request
+                    .headers
+                    .iter()
+                    .map(|it| query_row(it, state, true).into()),
+            )
+            .spacing(8)
+        ]
+        .spacing(16),
+    )
+    .style(|t| container::Style {
+        border: Border::default().rounded(16),
+        background: Some(iced::Background::Color(t.palette().background)),
+        ..container::Style::default()
+    })
+}
+
 fn header_panel<'a>(
     state: &'a State,
     endpoint: &'a EndpointDb,
@@ -866,7 +1050,7 @@ fn header_panel<'a>(
         column![
             row![
                 text("Headers"),
-                if state.draft_request.is_some() || current_response(state).is_none() {
+                if state.copy_request.is_some() || current_response(state).is_none() {
                     bt(
                         "Add",
                         Some(Message::Header(MHeader::AddHeader())),
@@ -880,7 +1064,7 @@ fn header_panel<'a>(
             .padding([0, 8])
             .align_y(Center)
             .width(Fill),
-            match &state.draft_request {
+            match &state.copy_request {
                 Some(drafts) => {
                     Column::from_iter(
                         drafts
@@ -925,11 +1109,18 @@ fn strip_url(url: &str) -> String {
     url.to_string()
 }
 
+fn method_from_state(state: &State) -> HttpMethod {
+    match current_endpoint(state) {
+        Some(endpoint) => endpoint.method,
+        None => state.draft_method,
+    }
+}
+
 fn format_url_from_state(state: &State) -> String {
     match current_endpoint(state) {
         Some(endpoint) => {
             let empty = [].to_vec().clone();
-            let query_param_vec: Vec<String> = (match &state.draft_request {
+            let query_param_vec: Vec<String> = (match &state.copy_request {
                 Some(drafts) => &drafts.query_params,
                 None => match endpoint.responses.get(state.selected_response_index) {
                     Some(resp) => &resp.request.query_params,
@@ -953,7 +1144,27 @@ fn format_url_from_state(state: &State) -> String {
                 query_param_vec.join("&")
             )
         }
-        None => state.draft.clone(),
+        None => {
+            let query_param_vec: Vec<String> = state
+                .draft_request
+                .query_params
+                .iter()
+                .filter(|it| !it.key.is_empty() && it.on)
+                .map(|it| {
+                    format!(
+                        "{}={}",
+                        urlencoding::encode(&it.key),
+                        urlencoding::encode(&it.value)
+                    )
+                })
+                .collect();
+            format!(
+                "{}{}{}",
+                state.draft,
+                if query_param_vec.is_empty() { "" } else { "?" },
+                query_param_vec.join("&")
+            )
+        }
     }
 }
 
@@ -961,7 +1172,7 @@ fn headers_from_state(state: &State) -> HeaderMap {
     let empty: Vec<EndpointKvPair> = [].to_vec().clone();
     match current_endpoint(state) {
         Some(endpoint) => HeaderMap::from_iter(
-            (match &state.draft_request {
+            (match &state.copy_request {
                 Some(drafts) => &drafts.headers,
                 None => match endpoint.responses.get(state.selected_response_index) {
                     Some(resp) => &resp.request.headers,
@@ -977,7 +1188,19 @@ fn headers_from_state(state: &State) -> HeaderMap {
                 )
             }),
         ),
-        None => HeaderMap::new(),
+        None => HeaderMap::from_iter(
+            state
+                .draft_request
+                .headers
+                .iter()
+                .filter(|it| !it.key.is_empty() && it.on)
+                .map(|it| {
+                    (
+                        HeaderName::from_str(&it.key).unwrap(),
+                        HeaderValue::from_str(&it.value).unwrap(),
+                    )
+                }),
+        ),
     }
 }
 
@@ -994,7 +1217,7 @@ fn response_panels<'a>(
                     bi(
                         Icons::Plus,
                         Some(Message::SetDraftQuery(false)),
-                        if state.draft_request.is_none() {
+                        if state.copy_request.is_none() {
                             ButtonType::Outlined
                         } else {
                             ButtonType::Primary
@@ -1006,7 +1229,7 @@ fn response_panels<'a>(
                                 index,
                                 Some(Message::SetSelectedResponseIndex(index - 1)),
                                 if index == state.selected_response_index + 1
-                                    && state.draft_request.is_none()
+                                    && state.copy_request.is_none()
                                 {
                                     ButtonType::Primary
                                 } else {
@@ -1060,7 +1283,7 @@ fn response_panels<'a>(
                     .spacing(8)
                     .width(Fill),
                     bi(
-                        Icons::Check,
+                        Icons::Format,
                         Some(Message::FormatResponse),
                         ButtonType::Text
                     ),
@@ -1105,9 +1328,19 @@ impl From<reqwest::Error> for MyErr {
     }
 }
 
-async fn send_get_request(url: String, headers: HeaderMap) -> Result<(String, StatusCode), MyErr> {
+async fn send_get_request(
+    url: String,
+    headers: HeaderMap,
+    method: HttpMethod,
+) -> Result<(String, StatusCode), MyErr> {
     let client = reqwest::Client::new();
-    let resp = client.get(url).headers(headers).send().await?;
+    let resp = match method {
+        HttpMethod::GET => client.get(url),
+        HttpMethod::POST => client.post(url),
+    }
+    .headers(headers)
+    .send()
+    .await?;
     let status = resp.status();
     let text = resp.text().await?;
     Ok((text, status))
