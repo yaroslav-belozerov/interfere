@@ -17,6 +17,7 @@ pub enum Message {
     DecrementSelectedEndpoint,
     IncrementSelectedEndpoint,
     Focus(&'static str),
+    PasteURL(String),
     ClickEndpoint(u64),
     ClickDeleteEndpoint(u64),
     ClickDeleteResponse(u64),

@@ -24,8 +24,9 @@ use logic::db::{get_db, init, load_endpoints};
 use logic::message_handlers::{message_header, message_query_param};
 use logic::ui::*;
 use markup_fmt::{Language, format_text};
-use reqwest::StatusCode;
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
+use reqwest::{StatusCode, Url};
+use rusqlite::vtab::array::Array;
 use serde_json::Value;
 use std::cmp::max;
 use std::str::FromStr;
@@ -226,9 +227,13 @@ fn update(state: &mut State, message: Message) -> Task<Message> {
                         ]);
                     }
                 }
+                state.draft = "".to_string();
             }
-            state.draft = "".to_string();
             update(state, Message::RefetchDb)
+        }
+        Message::PasteURL(url) => {
+            transform_pasted_url(state, url);
+            Task::none()
         }
         Message::GotError(err) => {
             state.can_send = true;
@@ -408,6 +413,54 @@ fn update(state: &mut State, message: Message) -> Task<Message> {
                 },
             }),
         ),
+    }
+}
+
+fn transform_pasted_url(state: &mut State, transform: String) {
+    let mut url = transform.clone();
+    if !url.starts_with("https://") && !url.starts_with("http://") {
+        url = format!("https://{}", url);
+    }
+    match Url::parse(&url) {
+        Ok(it) => {
+            if it.scheme() != "https" && it.scheme() != "http" {
+                state.draft = url
+            } else {
+                let query_params = match it.query() {
+                    Some(params) => params
+                        .split("&")
+                        .map(|it| {
+                            let mut kv = it.split("=");
+                            let first = kv.next();
+                            let second = kv.next();
+                            if first.is_none() || second.is_none() {
+                                EndpointKvPair {
+                                    id: 0,
+                                    parent_response_id: 0,
+                                    key: "".to_string(),
+                                    value: "".to_string(),
+                                    on: false,
+                                }
+                            } else {
+                                EndpointKvPair {
+                                    id: 0,
+                                    parent_response_id: 0,
+                                    key: first.unwrap().to_string(),
+                                    value: second.unwrap().to_string(),
+                                    on: true,
+                                }
+                            }
+                        })
+                        .collect(),
+                    None => [].to_vec(),
+                };
+                state.draft_request.query_params = query_params;
+                let mut new_url = it.clone();
+                new_url.set_query(None);
+                state.draft = new_url.to_string()
+            }
+        }
+        Err(_) => state.draft = url,
     }
 }
 
@@ -620,6 +673,7 @@ fn draft_urlbar<'a>(state: &'a State) -> Element<'a, Message> {
         &Message::SetDraft,
         Some(Message::Send),
     )
+    .on_paste(|st| Message::PasteURL(st))
     .id("main_urlbar");
     mb(
         column![
