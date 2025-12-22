@@ -4,11 +4,10 @@ pub fn create_query_param(
     parent_response_id: u64,
     key: &str,
     value: &str,
-    on: bool,
 ) -> RusqliteResult<u64> {
     conn.execute(
-        "INSERT INTO query_param (parent_response_id, key, value, is_on) VALUES (?, ?, ?, ?)",
-        rusqlite::params![parent_response_id, key, value, on],
+        "INSERT INTO query_param (parent_response_id, key, value) VALUES (?, ?, ?)",
+        rusqlite::params![parent_response_id, key, value],
     )?;
     Ok(conn.last_insert_rowid() as u64)
 }
@@ -18,11 +17,10 @@ pub fn create_query_param_with_tx(
     parent_response_id: u64,
     key: &str,
     value: &str,
-    on: bool,
 ) -> RusqliteResult<u64> {
     tx.execute(
-        "INSERT INTO query_param (parent_response_id, key, value, is_on) VALUES (?, ?, ?, ?)",
-        rusqlite::params![parent_response_id, key, value, on],
+        "INSERT INTO query_param (parent_response_id, key, value) VALUES (?, ?, ?)",
+        rusqlite::params![parent_response_id, key, value],
     )?;
     Ok(tx.last_insert_rowid() as u64)
 }
@@ -39,14 +37,6 @@ pub fn delete_query_params_by_response(
     conn.execute(
         "DELETE FROM query_param WHERE parent_response_id = ?",
         [parent_response_id],
-    )?;
-    Ok(())
-}
-
-pub fn update_query_param_on(conn: &Connection, id: u64) -> RusqliteResult<()> {
-    conn.execute(
-        "UPDATE query_param SET is_on = NOT is_on WHERE id = ?",
-        rusqlite::params![id],
     )?;
     Ok(())
 }

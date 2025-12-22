@@ -2,10 +2,6 @@ use crate::AppTheme;
 use chrono::NaiveDateTime;
 use core::fmt;
 use reqwest::StatusCode;
-use rusqlite::{
-    ToSql,
-    types::{FromSql, FromSqlResult, ToSqlOutput, ValueRef},
-};
 use std::{fmt::Display, str::FromStr};
 
 #[derive(Debug, Clone)]
@@ -137,11 +133,23 @@ pub struct State {
     pub theme: AppTheme,
 }
 
+impl From<reqwest::Error> for MyErr {
+    fn from(err: reqwest::Error) -> Self {
+        if err.is_builder() {
+            Self::Client("Invalid URL scheme.".to_string())
+        } else {
+            Self::Unknown(err.to_string())
+        }
+    }
+}
+
 impl Display for MyErr {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::Unknown(s) => write!(f, "Unknown error: {s}"),
-            Self::Client(s) => write!(f, "Interfere error: {s}"),
+            Self::Client(msg) => write!(f, "{}", msg),
+            Self::Unknown(msg) => {
+                write!(f, "Unknown error, please report to the developer: {}", msg)
+            }
         }
     }
 }

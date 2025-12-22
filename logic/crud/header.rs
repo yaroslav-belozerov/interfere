@@ -5,11 +5,10 @@ pub fn create_header(
     parent_response_id: u64,
     key: &str,
     value: &str,
-    on: bool,
 ) -> RusqliteResult<u64> {
     conn.execute(
-        "INSERT INTO header (parent_response_id, key, value, is_on) VALUES (?, ?, ?, ?)",
-        rusqlite::params![parent_response_id, key, value, on],
+        "INSERT INTO header (parent_response_id, key, value) VALUES (?, ?, ?)",
+        rusqlite::params![parent_response_id, key, value],
     )?;
     Ok(conn.last_insert_rowid() as u64)
 }
@@ -19,11 +18,10 @@ pub fn create_header_with_tx(
     parent_response_id: u64,
     key: &str,
     value: &str,
-    on: bool,
 ) -> RusqliteResult<u64> {
     tx.execute(
-        "INSERT INTO header (parent_response_id, key, value, is_on) VALUES (?, ?, ?, ?)",
-        rusqlite::params![parent_response_id, key, value, on],
+        "INSERT INTO header (parent_response_id, key, value) VALUES (?, ?, ?)",
+        rusqlite::params![parent_response_id, key, value],
     )?;
     Ok(tx.last_insert_rowid() as u64)
 }
@@ -44,24 +42,10 @@ pub fn delete_headers_by_response(
     Ok(())
 }
 
-pub fn update_header(
-    conn: &Connection,
-    id: u64,
-    key: &str,
-    value: &str,
-    on: bool,
-) -> RusqliteResult<()> {
+pub fn update_header(conn: &Connection, id: u64, key: &str, value: &str) -> RusqliteResult<()> {
     conn.execute(
-        "UPDATE header SET key = ?, value = ?, is_on = ? WHERE id = ?",
-        rusqlite::params![key, value, on, id],
-    )?;
-    Ok(())
-}
-
-pub fn update_header_on(conn: &Connection, id: u64) -> RusqliteResult<()> {
-    conn.execute(
-        "UPDATE header SET is_on = NOT is_on WHERE id = ?",
-        rusqlite::params![id],
+        "UPDATE header SET key = ?, value = ? WHERE id = ?",
+        rusqlite::params![key, value, id],
     )?;
     Ok(())
 }

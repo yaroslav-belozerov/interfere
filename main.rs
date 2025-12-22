@@ -1,7 +1,6 @@
 mod logic;
 
 use crate::AppTheme;
-use crate::logic::crud::endpoint;
 use chrono::{Local, NaiveDateTime, TimeZone};
 use iced::Alignment::{self, Center};
 use iced::Length::{Fill, Shrink};
@@ -73,10 +72,10 @@ fn create_new_endpoint(state: &mut State, parent_id: u64, text: &str, code: Stat
             let mut db = get_db().lock().unwrap();
             let tx = db.transaction().unwrap();
             for q in &d.query_params {
-                create_query_param_with_tx(&tx, resp_id, &q.key, &q.value, q.on).unwrap();
+                create_query_param_with_tx(&tx, resp_id, &q.key, &q.value).unwrap();
             }
             for h in &d.headers {
-                create_header_with_tx(&tx, resp_id, &h.key, &h.value, h.on).unwrap();
+                create_header_with_tx(&tx, resp_id, &h.key, &h.value).unwrap();
             }
             tx.commit().unwrap();
             state.draft_response = None;
@@ -137,14 +136,11 @@ fn update(state: &mut State, message: Message) -> Task<Message> {
             Task::none()
         }
         Message::Send => {
-            if state.ctrl_pressed {
-                return update(state, Message::SendDraft);
-            }
             state.can_send = false;
             let url = format_url_from_state(state);
             let headers = headers_from_state(state);
             let method = method_from_state(state);
-            Task::perform(send_get_request(url, headers, method), |res| match res {
+            Task::perform(send_request(url, headers, method), |res| match res {
                 Ok((text, code)) => Message::GotResponse(text, code, false),
                 Err(err) => Message::GotError(err),
             })
@@ -154,7 +150,7 @@ fn update(state: &mut State, message: Message) -> Task<Message> {
             let url = format_url_from_state(state);
             let headers = headers_from_state(state);
             let method = method_from_state(state);
-            Task::perform(send_get_request(url, headers, method), |res| match res {
+            Task::perform(send_request(url, headers, method), |res| match res {
                 Ok((text, code)) => Message::GotResponse(text, code, true),
                 Err(err) => Message::GotError(err),
             })
@@ -215,8 +211,8 @@ fn update(state: &mut State, message: Message) -> Task<Message> {
                                     code,
                                     received_time: NaiveDateTime::default(),
                                     request: Request {
-                                        query_params: [].to_vec(),
-                                        headers: [].to_vec(),
+                                        query_params: state.draft_request.query_params.to_vec(),
+                                        headers: state.draft_request.headers.to_vec(),
                                     },
                                 }]
                                 .to_vec(),
@@ -234,9 +230,9 @@ fn update(state: &mut State, message: Message) -> Task<Message> {
             state.draft = "".to_string();
             update(state, Message::RefetchDb)
         }
-        Message::GotError(_err) => {
+        Message::GotError(err) => {
             state.can_send = true;
-            state.error_message = Some("Could not send request".to_string());
+            state.error_message = Some(err.to_string());
             Task::none()
         }
         Message::ClearErrorMessage => {
@@ -331,8 +327,7 @@ fn update(state: &mut State, message: Message) -> Task<Message> {
             Task::none()
         }
         Message::Focus(it) => focus(it),
-
-        Message::DecrementSelectedResponseIndex => match state.draft_response {
+        Message::DecrementSelectedResponseIndex => match state.copy_request {
             Some(_) => {
                 state.draft_response = None;
                 state.copy_request = None;
@@ -1338,17 +1333,7 @@ fn response_panels<'a>(
     ]
 }
 
-impl From<reqwest::Error> for MyErr {
-    fn from(err: reqwest::Error) -> Self {
-        if err.is_builder() {
-            Self::Client("Invalid URL scheme.".to_string())
-        } else {
-            Self::Unknown(err.to_string())
-        }
-    }
-}
-
-async fn send_get_request(
+async fn send_request(
     url: String,
     headers: HeaderMap,
     method: HttpMethod,

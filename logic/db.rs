@@ -47,7 +47,6 @@ pub fn init() -> Result<()> {
              parent_response_id integer not null,
              key varchar(512),
              value varchar(512),
-             is_on boolean,
              FOREIGN KEY (parent_response_id) references response(id) ON DELETE CASCADE
          )",
         (),
@@ -58,7 +57,6 @@ pub fn init() -> Result<()> {
              parent_response_id integer not null,
              key varchar(512),
              value varchar(512),
-             is_on boolean,
              FOREIGN KEY (parent_response_id) references response(id) ON DELETE CASCADE
          )",
         (),
@@ -93,8 +91,8 @@ pub fn load_endpoints(
         let (id, url, method) = endpoint_result?;
 
         let mut resp_stmt = conn.prepare(
-            "SELECT id, parent_endpoint_id, text, code, received_time 
-             FROM response 
+            "SELECT id, parent_endpoint_id, text, code, received_time
+             FROM response
              WHERE parent_endpoint_id = ?",
         )?;
         let responses: Vec<Response> = resp_stmt
@@ -102,8 +100,8 @@ pub fn load_endpoints(
                 let resp_id = row.get(0)?;
 
                 let mut qp_stmt = conn.prepare(
-                    "SELECT id, parent_response_id, key, value, is_on 
-             FROM query_param 
+                    "SELECT id, parent_response_id, key, value
+             FROM query_param
              WHERE parent_response_id = ?",
                 )?;
                 let query_params: Vec<EndpointKvPair> = qp_stmt
@@ -113,14 +111,14 @@ pub fn load_endpoints(
                             parent_response_id: row.get(1)?,
                             key: row.get(2)?,
                             value: row.get(3)?,
-                            on: row.get(4)?,
+                            on: true,
                         })
                     })?
                     .collect::<Result<_, _>>()?;
 
                 let mut hdr_stmt = conn.prepare(
-                    "SELECT id, parent_response_id, key, value, is_on 
-             FROM header 
+                    "SELECT id, parent_response_id, key, value
+             FROM header
              WHERE parent_response_id = ?",
                 )?;
                 let headers: Vec<EndpointKvPair> = hdr_stmt
@@ -130,7 +128,7 @@ pub fn load_endpoints(
                             parent_response_id: row.get(1)?,
                             key: row.get(2)?,
                             value: row.get(3)?,
-                            on: row.get(4)?,
+                            on: true,
                         })
                     })?
                     .collect::<Result<_, _>>()?;

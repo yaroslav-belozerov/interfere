@@ -4,13 +4,8 @@ use crate::{EndpointKvPair, MHeader, MQueryParam, Message, Request, State, updat
 
 use super::{
     crud::{
-        header::{
-            delete_header, update_header_key, update_header_on, update_header_value,
-        },
-        query::{
-            delete_query_param, update_query_param_key, update_query_param_on,
-            update_query_param_value,
-        },
+        header::{delete_header, update_header_key, update_header_value},
+        query::{delete_query_param, update_query_param_key, update_query_param_value},
     },
     db::get_db,
 };
@@ -117,10 +112,7 @@ pub fn message_query_param(state: &mut State, message: MQueryParam) -> Task<Mess
                 Task::none()
             }
             None => match state.selected_endpoint {
-                Some(_) => {
-                    update_query_param_on(&get_db().lock().unwrap(), id).unwrap();
-                    update(state, Message::RefetchDb)
-                }
+                Some(_) => Task::none(),
                 None => {
                     if let Some(elem) = state
                         .draft_request
@@ -268,10 +260,7 @@ pub fn message_header(state: &mut State, message: MHeader) -> Task<Message> {
                 Task::none()
             }
             None => match state.selected_endpoint {
-                Some(_) => {
-                    update_header_on(&get_db().lock().unwrap(), id).unwrap();
-                    update(state, Message::RefetchDb)
-                }
+                Some(_) => Task::none(),
                 None => {
                     if let Some(elem) = state
                         .draft_request
