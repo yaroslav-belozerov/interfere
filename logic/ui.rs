@@ -1,6 +1,7 @@
 use crate::logic::common::Message;
 use iced::Alignment::Center;
 use iced::Length::Shrink;
+use iced::advanced::text::{Paragraph, paragraph};
 use iced::border::Radius;
 use iced::theme::Palette;
 use iced::widget::button::Status;
@@ -37,6 +38,7 @@ pub enum ButtonType {
     Outlined,
     PrimaryInline,
     Inline,
+    OutlinedInline,
 }
 
 pub struct AppTheme {
@@ -175,7 +177,7 @@ fn text_b<'a>(content: impl IntoFragment<'a>, on_click: Option<Message>) -> Butt
     button(text(content))
         .on_press_maybe(on_click)
         .style(|theme, status| button::Style {
-            border: border::rounded(8),
+            border: border::rounded(0),
             background: Some(iced::Background::Color(match status {
                 button::Status::Hovered => Color::parse("#32333d").unwrap(),
                 _ => Color::parse("#242530").unwrap(),
@@ -189,7 +191,7 @@ fn outlined_b<'a>(string: impl IntoFragment<'a>, on_click: Option<Message>) -> B
         .style(|t, s| button::Style {
             border: Border {
                 color: Color::parse("#C0CAF5").unwrap(),
-                radius: Radius::new(8),
+                radius: Radius::new(0),
                 width: 1.0,
             },
             background: match s {
@@ -215,6 +217,7 @@ pub fn bt<'a>(
         ButtonType::Outlined => outlined_b(content, on_click),
         ButtonType::PrimaryInline => primary_inline_b(content, on_click, None),
         ButtonType::Inline => inline_b(content, on_click),
+        ButtonType::OutlinedInline => todo!(),
     }
 }
 
@@ -228,8 +231,9 @@ pub fn bi<'a>(
         ButtonType::Text => icon_text_b(icon, on_click),
         ButtonType::Danger => icon_danger_b(icon, on_click),
         ButtonType::Outlined => icon_outlined_b(icon, on_click),
-        ButtonType::PrimaryInline => icon_primary_b(icon, on_click),
+        ButtonType::PrimaryInline => icon_primary_inline_b(icon, on_click),
         ButtonType::Inline => icon_inline_b(icon, on_click),
+        ButtonType::OutlinedInline => icon_outlined_inline_b(icon, on_click),
     }
 }
 
@@ -244,8 +248,9 @@ pub fn bti<'a>(
         ButtonType::Text => todo!(),
         ButtonType::Danger => danger_b(content, on_click, Some(icon)),
         ButtonType::Outlined => todo!(),
-        ButtonType::PrimaryInline => icon_primary_b(icon, on_click),
-        ButtonType::Inline => text_b(content, on_click),
+        ButtonType::PrimaryInline => todo!(),
+        ButtonType::Inline => todo!(),
+        ButtonType::OutlinedInline => todo!(),
     }
 }
 
@@ -330,6 +335,49 @@ fn icon_primary_b<'a>(icon: Icons, on_click: Option<Message>) -> Button<'a, Mess
     .padding(6)
 }
 
+fn icon_primary_inline_b<'a>(icon: Icons, on_click: Option<Message>) -> Button<'a, Message> {
+    button(
+        svg(svg::Handle::from_memory(match_icon(icon)))
+            .style(|t, _| svg::Style {
+                color: Some(button::primary(t, Status::Active).text_color),
+            })
+            .width(16)
+            .height(16),
+    )
+    .on_press_maybe(on_click)
+    .style(|t, s| button::Style {
+        border: Border::default().rounded(0),
+        ..button::primary(t, s)
+    })
+    .padding(6)
+}
+
+fn icon_outlined_inline_b<'a>(icon: Icons, on_click: Option<Message>) -> Button<'a, Message> {
+    button(
+        svg(svg::Handle::from_memory(match_icon(icon)))
+            .style(|t, _| svg::Style {
+                color: Some(button::text(t, Status::Active).text_color),
+            })
+            .width(16)
+            .height(16),
+    )
+    .on_press_maybe(on_click)
+    .style(|t, s| button::Style {
+        border: Border {
+            color: Color::parse("#C0CAF5").unwrap(),
+            radius: Radius::new(0),
+            width: 1.0,
+        },
+        background: match s {
+            button::Status::Hovered => Some(Background::Color(Color::parse("#32333D").unwrap())),
+            _ => None,
+        },
+        text_color: button::text(t, Status::Active).text_color,
+        ..button::text(t, s)
+    })
+    .padding(6)
+}
+
 fn icon_outlined_b<'a>(icon: Icons, on_click: Option<Message>) -> Button<'a, Message> {
     button(
         svg(svg::Handle::from_memory(match_icon(icon)))
@@ -390,7 +438,7 @@ fn custom_text_input_style(theme: &Theme, status: text_input::Status) -> text_in
         background: iced::Background::Color(Color::parse("#242530").unwrap()),
         border: Border {
             color: Color::WHITE,
-            radius: Radius::new(8),
+            radius: Radius::new(0),
             width: match status {
                 text_input::Status::Focused => 1.0,
                 _ => 0.0,
@@ -402,7 +450,7 @@ fn custom_text_input_style(theme: &Theme, status: text_input::Status) -> text_in
 
 fn primary_button_style(theme: &Theme, status: button::Status) -> button::Style {
     button::Style {
-        border: border::rounded(8),
+        border: border::rounded(0),
         ..button::primary(theme, status)
     }
 }
@@ -415,7 +463,7 @@ fn primary_inline_button_style(theme: &Theme, status: button::Status) -> button:
 
 fn danger_button_style(theme: &Theme, status: button::Status) -> button::Style {
     button::Style {
-        border: border::rounded(8),
+        border: border::rounded(0),
         ..button::danger(theme, status)
     }
 }
@@ -444,7 +492,7 @@ impl_paddable!(Container<'a, Message, Theme, Renderer>);
 pub fn card<'a, T: Paddable<'a>>(content: T) -> Container<'a, Message> {
     container(
         container(content.apply_padding(16)).style(|_| container::Style {
-            border: border::rounded(8),
+            border: border::rounded(0),
             background: Some(iced::Background::Color(Color::parse("#242530").unwrap())),
             ..container::Style::default()
         }),
@@ -460,7 +508,7 @@ pub fn card_clickable<'a, T: Paddable<'a>>(
             .on_press_maybe(on_click)
             .padding(17)
             .style(|t, s| button::Style {
-                border: border::rounded(8),
+                border: border::rounded(0),
                 background: match s {
                     button::Status::Hovered => {
                         Some(Background::Color(Color::parse("#32333D").unwrap()))

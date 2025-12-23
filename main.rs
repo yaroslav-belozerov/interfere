@@ -12,7 +12,9 @@ use iced::widget::text_input::focus;
 use iced::widget::{
     Button, Column, Container, Row, column, container, horizontal_space, row, scrollable, svg, text,
 };
-use iced::{Border, Color, Element, Font, Renderer, Subscription, Task, Theme, keyboard};
+use iced::{
+    Background, Border, Color, Element, Font, Renderer, Subscription, Task, Theme, keyboard,
+};
 use logic::common::*;
 use logic::crud::endpoint::{create_endpoint_full, delete_endpoint};
 use logic::crud::header::create_header_with_tx;
@@ -95,6 +97,12 @@ fn update(state: &mut State, message: Message) -> Task<Message> {
         Message::SetCtrlPressed(pressed) => {
             state.ctrl_pressed = pressed;
             Task::none()
+        }
+        Message::Feedback => {
+            match open::that("https://github.com/yaroslav-belozerov/interfere/issues/new") {
+                Ok(_) => Task::none(),
+                Err(err) => update(state, Message::GotError(err.into())),
+            }
         }
         Message::SetDraftQuery(copy) => {
             if copy {
@@ -538,9 +546,28 @@ fn format_response(s: &str) -> String {
 }
 
 fn view<'a>(state: &'a State) -> Element<'a, Message> {
-    column![row![endpoint_list(state), column![content(state)]]]
-        .padding(16)
-        .into()
+    column![
+        row![endpoint_list(state), column![content(state)]]
+            .padding(16)
+            .height(Fill),
+        container(
+            row![
+                text("Interfere v0.1").color(state.theme.palette.text),
+                horizontal_space(),
+                bt("Feedback", Some(Message::Feedback), ButtonType::Text)
+            ]
+            .align_y(Center)
+            .padding([0, 8])
+            .width(Fill)
+        )
+        .style(|_| {
+            container::Style {
+                background: Some(Background::Color(Color::parse("#242530").unwrap())),
+                ..container::Style::default()
+            }
+        })
+    ]
+    .into()
 }
 
 pub fn main() -> iced::Result {
@@ -558,88 +585,74 @@ pub fn main() -> iced::Result {
 fn endpoint_list(state: &State) -> Element<'_, Message> {
     mr(
         column![
-            column![
-                mb(
-                    row![
-                        text("Interfere")
-                            .size(32)
-                            .font(Font {
-                                weight: Weight::Bold,
-                                ..GEIST_FONT
-                            })
-                            .color(state.theme.palette.primary),
-                        bi(Icons::Plus, Some(Message::Back), ButtonType::Outlined)
-                            .width(32)
-                            .height(32),
-                    ]
-                    .align_y(Center)
-                    .spacing(8)
-                    .into(),
-                    match &state.error_message {
-                        Some(_) => 8.0,
-                        None => 0.0,
-                    }
-                ),
-                match &state.error_message {
-                    Some(m) => {
+            match &state.error_message {
+                Some(m) => {
+                    mb(
                         bti(
                             m.clone(),
                             Icons::Close,
                             Some(Message::ClearErrorMessage),
                             ButtonType::Danger,
                         )
-                    }
-                    None => empty_b(),
+                        .into(),
+                        8.0,
+                    )
                 }
-            ],
-            mytext_input("Search...", &state.endp_search, &Message::SetSearch, None)
-                .width(348)
-                .id("searchbar"),
-            Column::from_iter(state.endpoints.iter().map(|el| {
-                row![
-                    bt(
-                        strip_url(&el.url),
-                        Some(Message::ClickEndpoint(el.id)),
-                        if state.selected_endpoint == Some(el.id) {
-                            ButtonType::PrimaryInline
-                        } else {
-                            ButtonType::Inline
-                        }
-                    )
-                    .width(Fill),
+                None => container(row![]),
+            },
+            mb(
+                mytext_input("Search...", &state.endp_search, &Message::SetSearch, None)
+                    .width(348)
+                    .id("searchbar")
+                    .into(),
+                8.0
+            ),
+            scrollable(
+                Column::from_iter(state.endpoints.iter().map(|el| {
                     row![
-                        container(
-                            row![text(el.method.to_string()).style(|_| {
-                                text::Style {
-                                    color: Some(Color::BLACK),
-                                    ..text::Style::default()
-                                }
-                            })]
-                            .padding([6, 8])
-                        )
-                        .style(|_| {
-                            container::Style {
-                                background: Some(iced::Background::Color(color_for_method(
-                                    el.method,
-                                ))),
-                                ..container::Style::default()
+                        bt(
+                            strip_url(&el.url),
+                            Some(Message::ClickEndpoint(el.id)),
+                            if state.selected_endpoint == Some(el.id) {
+                                ButtonType::PrimaryInline
+                            } else {
+                                ButtonType::Inline
                             }
-                        })
-                    ],
-                    bi(
-                        Icons::Delete,
-                        Some(Message::ClickDeleteEndpoint(el.id)),
-                        ButtonType::Inline
-                    )
-                    .width(48)
-                ]
-                .align_y(Alignment::Center)
-                .width(348)
-                .into()
-            }))
-            .spacing(2)
+                        )
+                        .width(Fill),
+                        row![
+                            container(
+                                row![text(el.method.to_string()).style(|_| {
+                                    text::Style {
+                                        color: Some(Color::BLACK),
+                                        ..text::Style::default()
+                                    }
+                                })]
+                                .padding([6, 8])
+                            )
+                            .style(|_| {
+                                container::Style {
+                                    background: Some(iced::Background::Color(color_for_method(
+                                        el.method,
+                                    ))),
+                                    ..container::Style::default()
+                                }
+                            })
+                        ],
+                        bi(
+                            Icons::Delete,
+                            Some(Message::ClickDeleteEndpoint(el.id)),
+                            ButtonType::Inline
+                        )
+                        .width(48)
+                    ]
+                    .align_y(Alignment::Center)
+                    .width(348)
+                    .into()
+                }))
+                .spacing(2),
+            )
         ]
-        .spacing(16.0)
         .into(),
         16.0,
     )
@@ -722,11 +735,13 @@ fn content<'a>(state: &'a State) -> Column<'a, Message> {
                     16.0,
                 ),
                 row![
-                    column![
-                        query_param_panel(state, endpoint),
-                        header_panel(state, endpoint)
-                    ]
-                    .spacing(16),
+                    scrollable(
+                        column![
+                            query_param_panel(state, endpoint),
+                            header_panel(state, endpoint)
+                        ]
+                        .spacing(16)
+                    ),
                     match state.draft_response {
                         Some(_) => {
                             draft_response_panel(state)
@@ -750,7 +765,9 @@ fn content<'a>(state: &'a State) -> Column<'a, Message> {
         None => column![
             draft_urlbar(state),
             row![
-                column![draft_query_param_panel(state), draft_header_panel(state)].spacing(16),
+                scrollable(
+                    column![draft_query_param_panel(state), draft_header_panel(state)].spacing(16)
+                ),
                 match state.draft_response {
                     Some(_) => {
                         draft_response_panel(state)
@@ -1287,9 +1304,9 @@ fn response_panels<'a>(
                         Icons::Plus,
                         Some(Message::SetDraftQuery(false)),
                         if state.copy_request.is_none() {
-                            ButtonType::Outlined
+                            ButtonType::OutlinedInline
                         } else {
-                            ButtonType::Primary
+                            ButtonType::PrimaryInline
                         }
                     ),
                     scrollable(
@@ -1307,7 +1324,7 @@ fn response_panels<'a>(
                             )
                             .into()
                         }))
-                        .spacing(4)
+                        .spacing(8)
                         .align_y(Center)
                     )
                     .direction(scrollable::Direction::Horizontal(
@@ -1470,7 +1487,7 @@ fn subscription(_state: &State) -> Subscription<Message> {
 }
 
 fn theme(state: &State) -> Theme {
-    Theme::custom("Abobolik".into(), state.theme.palette)
+    Theme::custom("Interfere".into(), state.theme.palette)
 }
 
 fn color_for_status(code: StatusCode) -> Color {

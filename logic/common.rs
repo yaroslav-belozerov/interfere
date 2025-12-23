@@ -2,7 +2,7 @@ use crate::AppTheme;
 use chrono::NaiveDateTime;
 use core::fmt;
 use reqwest::StatusCode;
-use std::{fmt::Display, str::FromStr};
+use std::{fmt::Display, io, str::FromStr};
 
 #[derive(Debug, Clone)]
 pub enum Message {
@@ -10,6 +10,7 @@ pub enum Message {
     Send,
     SendDraft,
     Back,
+    Feedback,
     RefetchDb,
     SetSelectedResponseIndex(usize),
     DecrementSelectedResponseIndex,
@@ -152,5 +153,11 @@ impl Display for MyErr {
                 write!(f, "Unknown error, please report to the developer: {}", msg)
             }
         }
+    }
+}
+
+impl From<io::Error> for MyErr {
+    fn from(value: io::Error) -> Self {
+        Self::Unknown(value.to_string())
     }
 }
