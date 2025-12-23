@@ -2,6 +2,12 @@
 
 Interfere is a desktop HTTP client. Minimal, fast, and keyboard-friendly.
 
+### ▶️ Running 
+> Available for Linux, Windows, MacOS.
+> `interfere.db` will be created in the working directory.
+
+[🔗 Get the executable for your OS](https://github.com/yaroslav-belozerov/interfere/releases)  
+
 ### 👍 Features (implemented)
 - **GET, POST requests**
   - Send request, save the response.
@@ -25,7 +31,7 @@ Interfere is a desktop HTTP client. Minimal, fast, and keyboard-friendly.
 - [reqwest](https://github.com/seanmonstar/reqwest) for HTTP
 - [rusqlite](https://github.com/rusqlite/rusqlite) as the SQLite driver
 
-### ▶️ Getting started
+### 🧑‍💻 Build yourself 
 > Requires the Rust toolchain.  
 > `interfere.db` will be created in the working directory.
 
@@ -38,6 +44,13 @@ Build and run (release):
 ```bash
 cargo run --release
 ```
+
+## 🖌️ Screenshots 
+<div style="display: flex; flex-wrap: wrap;">
+<img alt="Interfere Banner" src="/misc/screenshots/plain.png" style="width: 30%" />
+<img alt="Interfere Banner" src="/misc/screenshots/format.png" style="width: 30%" />
+<img alt="Interfere Banner" src="/misc/screenshots/auto_query.png" style="width: 30%" />
+</div>
 
 ### 👥 Contributions
 Feature requests, bugfixes, and contributions are welcome.  
