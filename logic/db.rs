@@ -68,14 +68,19 @@ pub fn init() -> Result<()> {
 pub fn load_endpoints(
     conn: &rusqlite::Connection,
     query: Option<&str>,
+    method: Option<HttpMethod>,
 ) -> Result<Vec<EndpointDb>, rusqlite::Error> {
     let search = match query {
         Some(it) => format!("%{}%", it),
         None => "%".to_string(),
     };
+    let search_method = match method {
+        Some(it) => format!("%{}%", it),
+        None => "%".to_string(),
+    };
     let mut stmt =
-        conn.prepare("SELECT id, url, method FROM endpoint WHERE url LIKE (?) OR EXISTS (SELECT 1 FROM response WHERE parent_endpoint_id = endpoint.id AND text LIKE (?)) ORDER BY id DESC")?;
-    let endpoint_rows = stmt.query_map([&search, &search], |row| {
+        conn.prepare("SELECT id, url, method FROM endpoint WHERE (url LIKE (?) OR EXISTS (SELECT 1 FROM response WHERE parent_endpoint_id = endpoint.id AND text LIKE (?))) AND method LIKE (?) ORDER BY id DESC")?;
+    let endpoint_rows = stmt.query_map([&search, &search, &search_method], |row| {
         Ok((
             row.get::<_, u64>(0)?,
             row.get::<_, String>(1)?,

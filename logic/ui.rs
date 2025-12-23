@@ -506,7 +506,7 @@ pub fn card_clickable<'a, T: Paddable<'a>>(
     container(
         button(content.apply_padding(0))
             .on_press_maybe(on_click)
-            .padding(17)
+            .padding(16)
             .style(|t, s| button::Style {
                 border: border::rounded(0),
                 background: match s {

@@ -5,6 +5,7 @@ edition = "2024"
 
 [dependencies]
 anyhow = "1.0.100"
+arboard = { version = "3.6.1", features = ["wayland-data-control"] }
 chrono = "0.4.42"
 iced = { version = "0.13.1", features = ["advanced", "svg", "tokio"] }
 jsonformat = "2.1.0"

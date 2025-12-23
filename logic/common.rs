@@ -1,8 +1,9 @@
 use crate::AppTheme;
+use arboard::Clipboard;
 use chrono::NaiveDateTime;
 use core::fmt;
 use reqwest::StatusCode;
-use std::{fmt::Display, io, str::FromStr};
+use std::{fmt::Display, io, str::FromStr, sync::Mutex};
 
 #[derive(Debug, Clone)]
 pub enum Message {
@@ -13,6 +14,7 @@ pub enum Message {
     Feedback,
     RefetchDb,
     SetSelectedResponseIndex(usize),
+    SetFilterMethod(Option<HttpMethod>),
     DecrementSelectedResponseIndex,
     IncrementSelectedResponseIndex,
     DecrementSelectedEndpoint,
@@ -23,8 +25,9 @@ pub enum Message {
     ClickDeleteEndpoint(u64),
     ClickDeleteResponse(u64),
     ClearErrorMessage,
+    ClickCopyResponse,
     SetCtrlPressed(bool),
-    GotResponse(String, StatusCode, bool),
+    GotResponse(String, StatusCode, HttpMethod, bool),
     DiscardDraftResponse,
     GotError(MyErr),
     Duplicate(String),
@@ -61,7 +64,7 @@ pub enum MyErr {
     Client(String),
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HttpMethod {
     GET,
     POST,
@@ -132,6 +135,8 @@ pub struct State {
     pub formatted_response: Option<String>,
     pub error_message: Option<String>,
     pub ctrl_pressed: bool,
+    pub filter_method: Option<HttpMethod>,
+    pub clipboard: Mutex<Clipboard>,
     pub theme: AppTheme,
 }
 

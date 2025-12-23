@@ -1,6 +1,7 @@
 mod logic;
 
 use crate::AppTheme;
+use arboard::Clipboard;
 use chrono::{Local, NaiveDateTime, TimeZone};
 use iced::Alignment::{self, Center};
 use iced::Length::{Fill, Shrink};
@@ -32,6 +33,7 @@ use rusqlite::vtab::array::Array;
 use serde_json::Value;
 use std::cmp::max;
 use std::str::FromStr;
+use std::sync::Mutex;
 
 impl State {
     fn new() -> (Self, Task<Message>) {
@@ -45,7 +47,7 @@ impl State {
                 },
                 draft_response: None,
                 draft_method: HttpMethod::GET,
-                endpoints: load_endpoints(&get_db().lock().unwrap(), None).unwrap(),
+                endpoints: load_endpoints(&get_db().lock().unwrap(), None, None).unwrap(),
                 endp_search: "".to_string(),
                 can_send: true,
                 selected_endpoint: None,
@@ -53,6 +55,8 @@ impl State {
                 formatted_response: None,
                 error_message: None,
                 ctrl_pressed: false,
+                filter_method: None,
+                clipboard: Mutex::new(Clipboard::new().unwrap()),
                 theme: AppTheme {
                     palette: Palette {
                         background: Color::parse("#1A1B26").unwrap(),
@@ -104,6 +108,10 @@ fn update(state: &mut State, message: Message) -> Task<Message> {
                 Err(err) => update(state, Message::GotError(err.into())),
             }
         }
+        Message::SetFilterMethod(method) => {
+            state.filter_method = method;
+            update(state, Message::RefetchDb)
+        }
         Message::SetDraftQuery(copy) => {
             if copy {
                 match current_response(state) {
@@ -127,10 +135,34 @@ fn update(state: &mut State, message: Message) -> Task<Message> {
                 update(state, Message::SetDraft(s)),
             ])
         }
+        Message::ClickCopyResponse => {
+            match current_response(state) {
+                Some(resp) => {
+                    match state.clipboard.lock().unwrap().set_text(
+                        match &state.formatted_response {
+                            Some(it) => it,
+                            None => &resp.text,
+                        }
+                        .to_string(),
+                    ) {
+                        Ok(_) => {}
+                        Err(err) => {
+                            println!("{}", err.to_string());
+                        }
+                    }
+                }
+                None => {}
+            }
+            Task::none()
+        }
         Message::Start => focus("main_urlbar"),
         Message::RefetchDb => {
-            state.endpoints =
-                load_endpoints(&get_db().lock().unwrap(), Some(&state.endp_search)).unwrap();
+            state.endpoints = load_endpoints(
+                &get_db().lock().unwrap(),
+                Some(&state.endp_search),
+                state.filter_method,
+            )
+            .unwrap();
             Task::none()
         }
         Message::SetSelectedResponseIndex(index) => {
@@ -149,8 +181,8 @@ fn update(state: &mut State, message: Message) -> Task<Message> {
             let url = format_url_from_state(state);
             let headers = headers_from_state(state);
             let method = method_from_state(state);
-            Task::perform(send_request(url, headers, method), |res| match res {
-                Ok((text, code)) => Message::GotResponse(text, code, false),
+            Task::perform(send_request(url, headers, method), move |res| match res {
+                Ok((text, code)) => Message::GotResponse(text, code, method, false),
                 Err(err) => Message::GotError(err),
             })
         }
@@ -158,9 +190,9 @@ fn update(state: &mut State, message: Message) -> Task<Message> {
             state.can_send = false;
             let url = format_url_from_state(state);
             let headers = headers_from_state(state);
-            let method = method_from_state(state);
-            Task::perform(send_request(url, headers, method), |res| match res {
-                Ok((text, code)) => Message::GotResponse(text, code, true),
+            let method = method_from_state(state).clone();
+            Task::perform(send_request(url, headers, method), move |res| match res {
+                Ok((text, code)) => Message::GotResponse(text, code, method, true),
                 Err(err) => Message::GotError(err),
             })
         }
@@ -175,7 +207,7 @@ fn update(state: &mut State, message: Message) -> Task<Message> {
                 update(state, Message::DiscardDraftResponse)
             }
         }
-        Message::GotResponse(text, code, is_draft) => {
+        Message::GotResponse(text, code, method, is_draft) => {
             state.can_send = true;
             if is_draft {
                 match &mut state.draft_response {
@@ -225,7 +257,7 @@ fn update(state: &mut State, message: Message) -> Task<Message> {
                                     },
                                 }]
                                 .to_vec(),
-                                method: HttpMethod::GET,
+                                method,
                             },
                         )
                         .unwrap();
@@ -552,7 +584,7 @@ fn view<'a>(state: &'a State) -> Element<'a, Message> {
             .height(Fill),
         container(
             row![
-                text("Interfere v0.1").color(state.theme.palette.text),
+                text("Interfere v0.2").color(state.theme.palette.text),
                 horizontal_space(),
                 bt("Feedback", Some(Message::Feedback), ButtonType::Text)
             ]
@@ -607,8 +639,30 @@ fn endpoint_list(state: &State) -> Element<'_, Message> {
                     .into(),
                 8.0
             ),
-            scrollable(
-                Column::from_iter(state.endpoints.iter().map(|el| {
+            mb(
+                Row::from_iter([HttpMethod::GET, HttpMethod::POST].iter().map(|m| {
+                    let method = m.clone();
+                    if state.filter_method.is_some() && state.filter_method.unwrap() == method {
+                        bt(
+                            method.to_string(),
+                            Some(Message::SetFilterMethod(None)),
+                            ButtonType::Primary,
+                        )
+                    } else {
+                        bt(
+                            method.to_string(),
+                            Some(Message::SetFilterMethod(Some(method))),
+                            ButtonType::Outlined,
+                        )
+                    }
+                    .into()
+                }))
+                .spacing(4)
+                .into(),
+                8.0
+            ),
+            scrollable(Column::from_iter(state.endpoints.iter().map(|el| {
+                mr(
                     row![
                         bt(
                             strip_url(&el.url),
@@ -622,13 +676,20 @@ fn endpoint_list(state: &State) -> Element<'_, Message> {
                         .width(Fill),
                         row![
                             container(
-                                row![text(el.method.to_string()).style(|_| {
-                                    text::Style {
-                                        color: Some(Color::BLACK),
-                                        ..text::Style::default()
-                                    }
-                                })]
-                                .padding([6, 8])
+                                row![
+                                    text(el.method.to_string())
+                                        .style(|_| {
+                                            text::Style {
+                                                color: Some(Color::BLACK),
+                                                ..text::Style::default()
+                                            }
+                                        })
+                                        .size(12)
+                                        .width(Fill)
+                                        .align_x(Center)
+                                ]
+                                .padding([2, 4])
+                                .width(40)
                             )
                             .style(|_| {
                                 container::Style {
@@ -642,16 +703,17 @@ fn endpoint_list(state: &State) -> Element<'_, Message> {
                         bi(
                             Icons::Delete,
                             Some(Message::ClickDeleteEndpoint(el.id)),
-                            ButtonType::Inline
+                            ButtonType::Text
                         )
-                        .width(48)
                     ]
                     .align_y(Alignment::Center)
+                    .spacing(6)
                     .width(348)
-                    .into()
-                }))
-                .spacing(2),
-            )
+                    .into(),
+                    8.0,
+                )
+                .into()
+            })))
         ]
         .into(),
         16.0,
@@ -1371,6 +1433,11 @@ fn response_panels<'a>(
                     bi(
                         Icons::Format,
                         Some(Message::FormatResponse),
+                        ButtonType::Text
+                    ),
+                    bi(
+                        Icons::Duplicate,
+                        Some(Message::ClickCopyResponse),
                         ButtonType::Text
                     ),
                     bi(
