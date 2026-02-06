@@ -33,11 +33,20 @@ jobs:
             asset_name: interfere-macos-arm64
     steps:
     - uses: actions/checkout@v4
+
+    - name: Install Act dependencies
+      if: ${{ env.ACT }}
+      run: |
+        apt-get update && apt-get install sudo -y
     
-    - name: Install Rust toolchain
-      uses: dtolnay/rust-toolchain@stable
-      with:
-        targets: ${{ matrix.target }}
+    - name: Update repos
+      run: sudo apt-get update -qq
+
+    - name: Install rust toolchain
+      run: sudo apt-get install -qy cargo rust-clippy
+
+    - name: install lzma
+      run: sudo apt-get update && sudo apt-get install -y liblzma-dev
     
     - name: Cache
       uses: actions/cache@v4
